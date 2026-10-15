@@ -1,0 +1,37 @@
+# Financial Crime AI Red Team — .gitignore
+
+# ── Environment & secrets ───────────────────────────────────────────────────
+.env
+.env.local
+*.pem
+*.p12
+*.key
+service-account*.json
+*-credentials.json
+application_default_credentials.json
+firebase-adminsdk*.json
+
+# ── Go build artifacts ──────────────────────────────────────────────────────
+/bin/
+*.exe
+*.test
+*.out
+coverage.out
+
+# ── Frontend build output ───────────────────────────────────────────────────
+frontend/dist/
+frontend/node_modules/
+
+# ── IDE ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Local test exports ───────────────────────────────────────────────────────
+evidence_*.json
+*.log

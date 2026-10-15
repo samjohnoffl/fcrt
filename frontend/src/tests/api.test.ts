@@ -1,0 +1,67 @@
+// API client unit tests — no network calls; fetch is mocked.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { FetchError } from '../api/client'
+
+// We test the FetchError class structure independently since testing
+// the fetch wrapper requires fetch mock infrastructure.
+describe('FetchError', () => {
+  it('is an instance of Error', () => {
+    const e = new FetchError(404, 'not found', 'NOT_FOUND')
+    expect(e instanceof Error).toBe(true)
+    expect(e instanceof FetchError).toBe(true)
+  })
+
+  it('carries status, message, and code', () => {
+    const e = new FetchError(503, 'Service Unavailable', 'SERVICE_DOWN')
+    expect(e.status).toBe(503)
+    expect(e.message).toBe('Service Unavailable')
+    expect(e.code).toBe('SERVICE_DOWN')
+    expect(e.name).toBe('FetchError')
+  })
+
+  it('defaults code to UNKNOWN when not supplied', () => {
+    const e = new FetchError(500, 'oops')
+    expect(e.code).toBe('UNKNOWN')
+  })
+})
+
+describe('API client fetch behaviour', () => {
+  const fetchMock = vi.fn()
+  beforeEach(() => { vi.stubGlobal('fetch', fetchMock) })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('throws FetchError on non-OK response', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ error: 'token expired', code: 'AUTH_EXPIRED' }),
+    })
+    const { api } = await import('../api/client')
+    await expect(api.get('/cohorts')).rejects.toSatisfy(
+      (e: unknown) => e instanceof FetchError && (e as FetchError).status === 401
+    )
+  })
+
+  it('sends Authorization header when token present', async () => {
+    localStorage.setItem('aml_id_token', 'test-token-xyz')
+    fetchMock.mockResolvedValue({
+      ok: true, status: 200, json: async () => [],
+    })
+    const { api } = await import('../api/client')
+    await api.get('/cohorts')
+    // token() reads localStorage at call time, so the header must be present.
+    const calls = fetchMock.mock.calls
+    const lastCall = calls[calls.length - 1]
+    const headers = (lastCall[1] as RequestInit).headers as Record<string, string>
+    expect(headers['Authorization']).toBe('Bearer test-token-xyz')
+    localStorage.removeItem('aml_id_token')
+  })
+
+  it('returns undefined for 204 No Content', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 204 })
+    const { api } = await import('../api/client')
+    const result = await api.get('/something')
+    expect(result).toBeUndefined()
+  })
+})
