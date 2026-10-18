@@ -88,6 +88,7 @@ func (ev *Evaluator) runStructuring(sel *bank.BatchSelection) []Alert {
 	for _, a := range sel.Accounts {
 		acctToEntity[a.ID] = a.EntityID
 	}
+	subjectType := entityTypeMap(sel)
 
 	// Group transactions: (from-entity, to-account) → entries.
 	type txKey struct {
@@ -98,6 +99,7 @@ func (ev *Evaluator) runStructuring(sel *bank.BatchSelection) []Alert {
 		id       uuid.UUID
 		ts       time.Time
 		amtCents int64
+		currency string
 	}
 	grouped := make(map[txKey][]txEntry)
 
@@ -114,6 +116,7 @@ func (ev *Evaluator) runStructuring(sel *bank.BatchSelection) []Alert {
 			id:       tx.ID,
 			ts:       tx.TxTimestamp,
 			amtCents: tx.AmountCents,
+			currency: tx.Currency,
 		})
 	}
 
@@ -137,17 +140,27 @@ func (ev *Evaluator) runStructuring(sel *bank.BatchSelection) []Alert {
 			}
 			if len(inWindow) >= cfg.MinTransactions {
 				txIDs := make([]uuid.UUID, len(inWindow))
+				var totalCents int64
+				var currency string
 				for x, ent := range inWindow {
 					txIDs[x] = ent.id
+					totalCents += ent.amtCents
+					if currency == "" {
+						currency = ent.currency
+					}
 				}
 				alerts = append(alerts, Alert{
-					ID:          deterministicAlertID(RuleStructuring, k.fromEntity, k.toAcct, entries[i].ts),
-					RuleID:      RuleStructuring,
-					RuleVersion: configHash,
-					EntityID:    k.fromEntity,
-					AccountIDs:  []uuid.UUID{k.toAcct},
-					TxIDs:       txIDs,
-					Severity:    "medium",
+					ID:           deterministicAlertID(RuleStructuring, k.fromEntity, k.toAcct, entries[i].ts),
+					RuleID:       RuleStructuring,
+					RuleVersion:  configHash,
+					EntityID:     k.fromEntity,
+					AccountIDs:   []uuid.UUID{k.toAcct},
+					TxIDs:        txIDs,
+					AmountCents:  totalCents,
+					Currency:     currency,
+					SubjectType:  subjectType[k.fromEntity],
+					ActivityType: "structuring",
+					Severity:     "medium",
 					Description: fmt.Sprintf(
 						"structuring: %d transactions below threshold to same counterparty within %dh",
 						len(inWindow), cfg.WindowHours,
@@ -173,6 +186,8 @@ func (ev *Evaluator) runLayering(sel *bank.BatchSelection) []Alert {
 	for _, a := range sel.Accounts {
 		acctToEntity[a.ID] = a.EntityID
 	}
+	subjectType := entityTypeMap(sel)
+	txByID := txLookup(sel)
 
 	// Build adjacency list.
 	type hop struct {
@@ -247,14 +262,19 @@ func (ev *Evaluator) runLayering(sel *bank.BatchSelection) []Alert {
 				newDepth := f.depth + 1
 
 				if newDepth >= cfg.MinHops {
+					amount, currency := sumAmount(txByID, newTxPath)
 					alerts = append(alerts, Alert{
-						ID:          deterministicAlertID(RuleLayering, entityID, startAcct.ID, chainStart),
-						RuleID:      RuleLayering,
-						RuleVersion: configHash,
-						EntityID:    entityID,
-						AccountIDs:  newPath,
-						TxIDs:       newTxPath,
-						Severity:    "high",
+						ID:           deterministicAlertID(RuleLayering, entityID, startAcct.ID, chainStart),
+						RuleID:       RuleLayering,
+						RuleVersion:  configHash,
+						EntityID:     entityID,
+						AccountIDs:   newPath,
+						TxIDs:        newTxPath,
+						AmountCents:  amount,
+						Currency:     currency,
+						SubjectType:  subjectType[entityID],
+						ActivityType: "layering",
+						Severity:     "high",
 						Description: fmt.Sprintf(
 							"layering: fund chain of %d hops detected within %dh",
 							newDepth, cfg.WindowHours,
@@ -293,11 +313,13 @@ func (ev *Evaluator) runRapidMovement(sel *bank.BatchSelection) []Alert {
 	for _, a := range sel.Accounts {
 		acctToEntity[a.ID] = a.EntityID
 	}
+	subjectType := entityTypeMap(sel)
 
 	type mvt struct {
 		id       uuid.UUID
 		ts       time.Time
 		amtCents int64
+		currency string
 	}
 	credits := make(map[uuid.UUID][]mvt)
 	debits := make(map[uuid.UUID][]mvt)
@@ -305,11 +327,11 @@ func (ev *Evaluator) runRapidMovement(sel *bank.BatchSelection) []Alert {
 	for _, tx := range sel.Transactions {
 		if tx.AmountCents >= cfg.MinAmountCents {
 			credits[tx.ToAccountID] = append(credits[tx.ToAccountID], mvt{
-				id: tx.ID, ts: tx.TxTimestamp, amtCents: tx.AmountCents,
+				id: tx.ID, ts: tx.TxTimestamp, amtCents: tx.AmountCents, currency: tx.Currency,
 			})
 		}
 		debits[tx.FromAccountID] = append(debits[tx.FromAccountID], mvt{
-			id: tx.ID, ts: tx.TxTimestamp, amtCents: tx.AmountCents,
+			id: tx.ID, ts: tx.TxTimestamp, amtCents: tx.AmountCents, currency: tx.Currency,
 		})
 	}
 	for k := range credits {
@@ -349,13 +371,17 @@ func (ev *Evaluator) runRapidMovement(sel *bank.BatchSelection) []Alert {
 			ratio := int(totalDebited * 100 / credit.amtCents)
 			if ratio >= cfg.DebitRatioPct {
 				alerts = append(alerts, Alert{
-					ID:          deterministicAlertID(RuleRapidMovement, entityID, acctID, credit.ts),
-					RuleID:      RuleRapidMovement,
-					RuleVersion: configHash,
-					EntityID:    entityID,
-					AccountIDs:  []uuid.UUID{acctID},
-					TxIDs:       append([]uuid.UUID{credit.id}, debitTxIDs...),
-					Severity:    "high",
+					ID:           deterministicAlertID(RuleRapidMovement, entityID, acctID, credit.ts),
+					RuleID:       RuleRapidMovement,
+					RuleVersion:  configHash,
+					EntityID:     entityID,
+					AccountIDs:   []uuid.UUID{acctID},
+					TxIDs:        append([]uuid.UUID{credit.id}, debitTxIDs...),
+					AmountCents:  credit.amtCents,
+					Currency:     credit.currency,
+					SubjectType:  subjectType[entityID],
+					ActivityType: "rapid_movement",
+					Severity:     "high",
 					Description: fmt.Sprintf(
 						"rapid_movement: %d%% of %d cents debited within %dm of credit",
 						ratio, credit.amtCents, cfg.WindowMinutes,
@@ -367,6 +393,44 @@ func (ev *Evaluator) runRapidMovement(sel *bank.BatchSelection) []Alert {
 		}
 	}
 	return alerts
+}
+
+// ─── SAR field helpers ────────────────────────────────────────────────────────
+
+// entityTypeMap indexes entities by ID for alert subject typing.
+func entityTypeMap(sel *bank.BatchSelection) map[uuid.UUID]string {
+	m := make(map[uuid.UUID]string, len(sel.Entities))
+	for _, e := range sel.Entities {
+		m[e.ID] = string(e.EntityType)
+	}
+	return m
+}
+
+// txLookup indexes transactions by ID so alert amounts can be aggregated.
+func txLookup(sel *bank.BatchSelection) map[uuid.UUID]bank.Transaction {
+	m := make(map[uuid.UUID]bank.Transaction, len(sel.Transactions))
+	for _, tx := range sel.Transactions {
+		m[tx.ID] = tx
+	}
+	return m
+}
+
+// sumAmount totals the amounts of the given transactions and returns the first
+// non-empty currency seen. Missing IDs are ignored.
+func sumAmount(txByID map[uuid.UUID]bank.Transaction, ids []uuid.UUID) (int64, string) {
+	var total int64
+	var currency string
+	for _, id := range ids {
+		tx, ok := txByID[id]
+		if !ok {
+			continue
+		}
+		total += tx.AmountCents
+		if currency == "" {
+			currency = tx.Currency
+		}
+	}
+	return total, currency
 }
 
 // ─── Deterministic alert ID ───────────────────────────────────────────────────

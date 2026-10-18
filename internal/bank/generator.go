@@ -3,9 +3,10 @@
 // Generator produces fully-deterministic synthetic banking data from a seed.
 //
 // Determinism contract:
-//   Given the same Seed, Predicate, and GeneratorVersion, Generate() always
-//   produces the same set of Entity, Account, and Transaction records
-//   (same UUIDs, same values, same order).
+//
+//	Given the same Seed, Predicate, and GeneratorVersion, Generate() always
+//	produces the same set of Entity, Account, and Transaction records
+//	(same UUIDs, same values, same order).
 //
 // Implementation notes:
 //   - math/rand/v2 PCG source seeded from the int64 Seed.
@@ -99,14 +100,20 @@ func deterministicUUID(ns uuid.UUID, counter uint64) uuid.UUID {
 	return id
 }
 
-// cohortNamespaceUUID produces a per-cohort UUID namespace from the cohort seed.
-// This ensures that UUIDs from different cohorts never collide even with the
-// same internal counter value.
-func cohortNamespaceUUID(seed int64) uuid.UUID {
+// cohortNamespaceUUID produces a per-cohort UUID namespace from the cohort ID
+// and the seed.
+//
+// Hashing the cohort ID *and* the seed ensures that two different cohorts never
+// share UUIDs — even when they are given the same seed — while re-running
+// Generate for the same cohort + seed still produces byte-identical rows
+// (AC-01.1). Hashing the seed alone would let same-seed cohorts collide on the
+// bank_entity/bank_account/bank_transaction primary keys.
+func cohortNamespaceUUID(cohortID uuid.UUID, seed int64) uuid.UUID {
 	h := sha256.New()
+	h.Write([]byte("fincrime-bank-namespace-v0.1.0:"))
+	h.Write(cohortID[:])
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(seed))
-	h.Write([]byte("fincrime-bank-namespace-v0.1.0:"))
 	h.Write(buf[:])
 	sum := h.Sum(nil)
 	var id uuid.UUID
@@ -163,7 +170,7 @@ func Generate(p GenerateParams) (*GenerateResult, error) {
 	// seeds always produce different sequences.
 	rng := rand.New(rand.NewPCG(uint64(p.Seed), 0xdeadbeefcafe1234))
 
-	ns := cohortNamespaceUUID(p.Seed)
+	ns := cohortNamespaceUUID(p.CohortID, p.Seed)
 	var counter uint64
 
 	// ── 1. Entities ──────────────────────────────────────────────────────────
@@ -201,7 +208,7 @@ func Generate(p GenerateParams) (*GenerateResult, error) {
 			atype := pickAccountType(rng, e.EntityType)
 			currency := currencyByAccountType[atype]
 			// Initial balance: 100 to 100,000 USD-equivalent in cents.
-			initialBalance := int64(10000+rng.IntN(9990001)) // 100.00 to 100_000.00
+			initialBalance := int64(10000 + rng.IntN(9990001)) // 100.00 to 100_000.00
 
 			acc := Account{
 				ID:           deterministicUUID(ns, counter),
@@ -467,7 +474,7 @@ func entityAttributes(rng *rand.Rand, etype EntityType, country string) map[stri
 	// any is acceptable here: this is a flexible JSONB blob with no schema.
 	attrs := map[string]any{
 		"incorporation_country": country,
-		"kyc_tier":             rng.IntN(3) + 1, // 1, 2, or 3
+		"kyc_tier":              rng.IntN(3) + 1, // 1, 2, or 3
 	}
 	if etype == EntityTypeShell {
 		attrs["nominee_directors"] = rng.IntN(3) + 1

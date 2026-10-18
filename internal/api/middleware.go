@@ -23,31 +23,34 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// ctxKeyUID is the unexported context key for the authenticated user UID.
-// Using a package-local type prevents collisions with other context values.
+// ctxKeyUID is retained for backwards compatibility; the principal is stored
+// under ctxKeyPrincipal (see authz.go).
 type ctxKeyType struct{}
 
 var ctxKeyUID = ctxKeyType{}
 
-// AuthVerifier abstracts Firebase ID token verification.
-// The production implementation wraps firebase.google.com/go/v4/auth.Client.
-// Tests inject a mock that accepts any non-empty token as valid.
+// AuthVerifier abstracts token verification. Implementations include
+// SessionVerifier (username/password session tokens), FirebaseVerifier, and
+// NoopVerifier (local dev only).
 //
 // Contract:
-//   - Returns the Firebase UID on success.
+//   - Returns the authenticated Principal (identity + role) on success.
 //   - Returns a non-nil error on any failure (expired, invalid, revoked).
 //   - Error message must contain "expired" when the token is expired
 //     so the middleware can return the correct error code (AC-07.2).
 type AuthVerifier interface {
-	VerifyIDToken(ctx context.Context, idToken string) (uid string, err error)
+	Verify(ctx context.Context, token string) (Principal, error)
 }
 
-// UIDFromContext retrieves the authenticated user UID stored by AuthMiddleware.
+// UIDFromContext retrieves the authenticated username stored by AuthMiddleware.
 // Returns ("", false) if the request was not authenticated (should not happen
 // inside an authenticated route group).
 func UIDFromContext(ctx context.Context) (string, bool) {
-	uid, ok := ctx.Value(ctxKeyUID).(string)
-	return uid, ok && uid != ""
+	p, ok := PrincipalFromContext(ctx)
+	if !ok {
+		return "", false
+	}
+	return p.Username, true
 }
 
 // AuthMiddleware returns a chi-compatible middleware that:
@@ -72,17 +75,16 @@ func AuthMiddleware(verifier AuthVerifier) func(http.Handler) http.Handler {
 				return
 			}
 
-			uid, err := verifier.VerifyIDToken(r.Context(), token)
+			principal, err := verifier.Verify(r.Context(), token)
 			if err != nil {
 				// Distinguish expiry from other failures (AC-07.2).
-				// The Firebase Admin SDK error message contains "expired".
 				errMsg := strings.ToLower(err.Error())
 				if strings.Contains(errMsg, "expired") {
 					slog.Warn("auth: token expired",
 						"path", r.URL.Path,
 						"method", r.Method)
 					writeError(w, http.StatusUnauthorized, "token_expired",
-						"ID token has expired")
+						"Session has expired — please sign in again")
 					return
 				}
 				slog.Warn("auth: token verification failed",
@@ -93,7 +95,7 @@ func AuthMiddleware(verifier AuthVerifier) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), ctxKeyUID, uid)
+			ctx := context.WithValue(r.Context(), ctxKeyPrincipal, principal)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -144,9 +146,15 @@ func NewFirebaseVerifier(ctx context.Context, projectID string) (*FirebaseVerifi
 	}, nil
 }
 
-// VerifyIDToken implements AuthVerifier.
-func (f *FirebaseVerifier) VerifyIDToken(ctx context.Context, idToken string) (string, error) {
-	return f.verifyFn(ctx, idToken)
+// Verify implements AuthVerifier. The verified user is given the analyst role
+// by default; map richer roles from Firebase custom claims when integrating the
+// Firebase Admin SDK.
+func (f *FirebaseVerifier) Verify(ctx context.Context, idToken string) (Principal, error) {
+	uid, err := f.verifyFn(ctx, idToken)
+	if err != nil {
+		return Principal{}, err
+	}
+	return Principal{Username: uid, Role: RoleAnalyst}, nil
 }
 
 // verifyFirebaseIDToken returns a closure that verifies a Firebase ID token
@@ -186,19 +194,19 @@ func verifyFirebaseIDToken(projectID string) func(ctx context.Context, idToken s
 // ─── NoopVerifier ─────────────────────────────────────────────────────────────
 
 // NoopVerifier is a development-only AuthVerifier that accepts any non-empty
-// Bearer token and echoes it as the UID.
+// Bearer token and grants the admin role.
 //
 // WARNING: NEVER use this in production — it provides no security.
-// It is enabled only when FIREBASE_PROJECT is not set.
+// Enabled only when AUTH_MODE=none.
 type NoopVerifier struct{}
 
-// VerifyIDToken implements AuthVerifier.
-// Returns the token as the UID if non-empty; error otherwise.
-func (NoopVerifier) VerifyIDToken(_ context.Context, idToken string) (string, error) {
-	if idToken == "" {
-		return "", fmt.Errorf("noop: empty token")
+// Verify implements AuthVerifier. Returns an admin principal for any non-empty
+// token; error otherwise.
+func (NoopVerifier) Verify(_ context.Context, token string) (Principal, error) {
+	if token == "" {
+		return Principal{}, fmt.Errorf("noop: empty token")
 	}
-	return "dev-uid-" + idToken[:min(8, len(idToken))], nil
+	return Principal{Username: "dev-uid-" + token[:min(8, len(token))], Role: RoleAdmin}, nil
 }
 
 func min(a, b int) int {
@@ -207,4 +215,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-

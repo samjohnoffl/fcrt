@@ -1,11 +1,14 @@
 // API types matching the Go domain model exactly.
 // Never invent fields here; update when the backend contract changes.
 
-export type Status = 'pending' | 'running' | 'completed' | 'failed'
+export type Status = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'inconclusive'
 export type ScenarioStatus = 'pending' | 'approved' | 'rejected'
 
 export interface ApiError {
-  error: string
+  /** Legacy/alias field; the API currently sends `message`. */
+  error?: string
+  /** Human-readable error message (backend `errorBody.message`). */
+  message?: string
   code: string
 }
 
@@ -70,19 +73,27 @@ export interface ScenarioProposal {
 
 /* ── Experiment ── */
 export interface RunResult {
-  alert_count: number
+  id: string
+  pair_id: string
+  run_type: 'baseline' | 'variant'
   control_hash: string
   manifest_hash: string
-  run_type: 'baseline' | 'variant'
-  run_at: string
+  alert_count: number
+  alert_summary?: Record<string, number>
+  started_at: string
+  completed_at?: string
 }
 
 export interface Outcome {
+  id: string
   pair_id: string
+  baseline_run_id: string
+  variant_run_id: string
   evasion_delta: number
   new_alert_rule_ids: string[]
   dropped_alert_rule_ids: string[]
   outcome_unchanged: boolean
+  created_at: string
 }
 
 export interface ExperimentPair {
@@ -95,15 +106,21 @@ export interface ExperimentPair {
   seed: number
   declared_change: string
   mutation_type: string
+  mutation_spec?: Record<string, unknown>
   created_at: string
   completed_at?: string
+  /** Outcome summary — present only once the pair has completed. */
+  evasion_delta?: number
+  new_alert_rule_ids?: string[]
+  dropped_alert_rule_ids?: string[]
+  outcome_unchanged?: boolean
 }
 
-export interface ExperimentDetail extends ExperimentPair {
-  baseline: RunResult
-  variant: RunResult
-  outcome: Outcome
-  mutation_spec: Record<string, unknown>
+/** GET /experiments/{id} returns the pair, its outcome, and both runs. */
+export interface ExperimentDetailResponse {
+  pair: ExperimentPair
+  outcome?: Outcome
+  runs: RunResult[]
 }
 
 export interface CreateExperimentRequest {
@@ -134,20 +151,22 @@ export interface EvidenceBundle {
     tx_count: number
     locked_at: string
   }
-  scenario_params?: ScenarioProposal
+  scenario_params: ScenarioProposal | null
   baseline_alerts: { id: string; rule_id: string }[]
   variant_alerts:  { id: string; rule_id: string }[]
   aml_diff: {
-    baseline_count: number
-    variant_count: number
+    baseline_alert_count: number
+    variant_alert_count: number
     evasion_delta: number
-    new_rule_ids: string[]
-    dropped_rule_ids: string[]
+    new_alert_rule_ids: string[]
+    dropped_alert_rule_ids: string[]
   }
   coverage_delta: CoverageRule[]
-  gemini_trace?: GeminiTrace
+  gemini_trace: GeminiTrace | null
   created_at: string
   checksum: string
+  /** Honest limitation labels (AC-06). */
+  limitations?: string[]
 }
 
 /* ── Coverage ── */
@@ -166,4 +185,128 @@ export interface CoverageSummary {
   covered_rules: number
   coverage_pct: number
   rules: CoverageRule[]
+}
+
+/* ── Campaign ── */
+export type CampaignStatus = 'active' | 'completed' | 'paused'
+
+export interface Campaign {
+  id: string
+  name: string
+  description: string
+  budget: number
+  experiments_used: number
+  status: CampaignStatus
+  control_config?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateCampaignRequest {
+  name: string
+  description: string
+  budget: number
+}
+
+/* ── Benchmark ── */
+export type BenchmarkStrategy = 'random' | 'gemini_only' | 'adaptive'
+
+export interface StrategySummary {
+  name: BenchmarkStrategy
+  valid_candidate_yield: number
+  approved_rate: number
+  coverage_gain: number
+  novelty_score: number
+  cost_per_finding: number
+  average_adaptive_score?: number
+  runtime_ms: number
+}
+
+export interface ComparisonResult {
+  num_candidates: number
+  strategies: StrategySummary[]
+  winner: BenchmarkStrategy
+  notes?: string
+}
+
+export interface BenchmarkResponse {
+  campaign_id: string
+  benchmark: ComparisonResult
+}
+
+/* ── Regression Test Pack ── */
+export interface RegressionCaseResult {
+  experiment_id: string
+  name: string
+  passed: boolean
+  mismatches?: string[]
+  expected: Record<string, unknown>
+  actual: Record<string, unknown>
+}
+
+export interface RegressionVerifyResponse {
+  ok: boolean
+  pack_version: string
+  total: number
+  passed: number
+  failed: number
+  results: RegressionCaseResult[]
+}
+
+/* ── Authentication & authorization ── */
+
+/** Authorization roles, hierarchical: admin ⊃ analyst. */
+export type Role = 'analyst' | 'admin'
+
+/** The authenticated caller. */
+export interface Principal {
+  username: string
+  role: Role
+}
+
+/** Response body of POST /auth/login. */
+export interface LoginResponse {
+  token: string
+  token_type: string
+  expires_at: string
+  user: Principal
+}
+
+/* ── User management (admin) ── */
+
+/** An application account as returned by GET /users. */
+export interface AppUser {
+  username: string
+  role: Role
+  disabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateUserRequest {
+  username: string
+  password: string
+  role: Role
+}
+
+export interface UpdateUserRequest {
+  role?: Role
+  password?: string
+  disabled?: boolean
+}
+
+/* ── Audit log (admin) ── */
+
+/** An immutable audit event from GET /audit. */
+export interface AuditEvent {
+  id: string
+  org_id: string
+  event_type: string
+  actor_uid: string
+  target_type: string
+  target_id: string
+  details: Record<string, unknown> | null
+  ip_address?: string
+  user_agent?: string
+  created_at: string
 }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/Layout'
+import { RoleGate } from '../components/RoleGate'
 import { StatusBadge } from '../components/StatusBadge'
 import { LoadingState, ErrorState, EmptyState } from '../components/StateViews'
 import { cohortApi } from '../api/endpoints'
@@ -22,7 +23,7 @@ export function CohortList() {
       <PageHeader
         title="Cohorts"
         subtitle="Versioned synthetic banking datasets"
-        actions={<button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button>}
+        actions={<RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button></RoleGate>}
       />
       <div className="page-body">
         <div className="filter-bar" style={{ marginBottom: 16 }}>
@@ -47,7 +48,7 @@ export function CohortList() {
             <EmptyState
               title="No cohorts found"
               body={filter !== 'all' ? `No ${filter} cohorts.` : 'Create your first cohort to get started.'}
-              action={filter === 'all' ? <button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button> : undefined}
+              action={filter === 'all' ? <RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button></RoleGate> : undefined}
             />
           ) : (
             <div className="table-wrap">

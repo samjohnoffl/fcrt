@@ -1,6 +1,10 @@
 // Package scenario — gemini.go
 //
-// GeminiProvider is the backend-only interface to the Gemini model via Vertex AI.
+// GeminiProvider is the backend-only interface to the Gemini model. Two
+// backends are supported behind the same interface and request/response shape:
+//
+//   - Vertex AI  (NewVertexClient) — ADC auth, requires a GCP project
+//   - Gemini API (NewGeminiAPIClient) — API-key auth, no GCP project/billing
 //
 // Security model:
 //   - All model output is treated as untrusted data (AGENTS.md).
@@ -107,12 +111,17 @@ type ClientConfig struct {
 	MaxPromptTokenBudget int
 }
 
+// DefaultModel is the Gemini model used when none is configured. Gemini 1.5 Pro
+// and 2.5 Flash have been retired for new API keys, so this is the current
+// structured-output default.
+const DefaultModel = "gemini-3.8-flash"
+
 // DefaultClientConfig returns sensible production defaults.
 func DefaultClientConfig(projectID, location string) ClientConfig {
 	return ClientConfig{
 		ProjectID:            projectID,
 		Location:             location,
-		ModelID:              "gemini-1.5-pro",
+		ModelID:              DefaultModel,
 		MaxOutputTokens:      2048,
 		Temperature:          0.4,
 		RequestTimeout:       30 * time.Second,
@@ -129,6 +138,16 @@ func (c *ClientConfig) validate() error {
 	if c.Location == "" {
 		return fmt.Errorf("ClientConfig: Location is required")
 	}
+	return c.validateCommon()
+}
+
+// validateCommon checks the provider-agnostic tunables. Used by both the Vertex
+// AI path (which additionally requires ProjectID/Location) and the Gemini API
+// key path (which requires neither).
+func (c *ClientConfig) validateCommon() error {
+	if c.ModelID == "" {
+		return fmt.Errorf("ClientConfig: ModelID is required")
+	}
 	if c.MaxOutputTokens < 256 || c.MaxOutputTokens > 8192 {
 		return fmt.Errorf("ClientConfig: MaxOutputTokens must be in [256, 8192]")
 	}
@@ -141,15 +160,24 @@ func (c *ClientConfig) validate() error {
 	return nil
 }
 
-// ─── Vertex AI HTTP client ────────────────────────────────────────────────────
+// ─── Gemini HTTP client (Vertex AI or Gemini API) ─────────────────────────────
 
-// vertexGeminiProvider implements GeminiProvider via the Vertex AI REST API.
-// It uses Application Default Credentials (ADC) for authentication.
-type vertexGeminiProvider struct {
+// geminiHTTPProvider implements GeminiProvider over the generateContent REST
+// API. The same request/response shape works for both Vertex AI (ADC auth) and
+// the Gemini API (API-key auth); only the endpoint and extra headers differ.
+type geminiHTTPProvider struct {
 	cfg      ClientConfig
 	hc       *http.Client
 	endpoint string
+	headers  map[string]string // e.g. x-goog-api-key for the Gemini API
+
+	// stripSchemaKeys removes response-schema keywords that Vertex AI accepts
+	// but the Gemini API rejects (currently additionalProperties).
+	stripSchemaKeys bool
 }
+
+// DefaultGeminiAPIModel is the model used by the Gemini API path when unset.
+const DefaultGeminiAPIModel = DefaultModel
 
 // NewVertexClient constructs a GeminiProvider backed by the Vertex AI REST API.
 // Authentication uses ADC — set GOOGLE_APPLICATION_CREDENTIALS or run on GCE/Cloud Run.
@@ -182,13 +210,54 @@ func NewVertexClient(cfg ClientConfig) (GeminiProvider, error) {
 		cfg.Location, cfg.ProjectID, cfg.Location, cfg.ModelID,
 	)
 
-	return &vertexGeminiProvider{cfg: cfg, hc: hc, endpoint: endpoint}, nil
+	return &geminiHTTPProvider{cfg: cfg, hc: hc, endpoint: endpoint}, nil
+}
+
+// NewGeminiAPIClient constructs a GeminiProvider backed by the Gemini API
+// (generativelanguage.googleapis.com) authenticated with an API key. This needs
+// no GCP project, ADC, or billing — useful for local dev and non-GCP hosting.
+//
+// The key is sent in the x-goog-api-key header (never in the URL) so it cannot
+// leak through request logging or error messages.
+func NewGeminiAPIClient(apiKey string, cfg ClientConfig) (GeminiProvider, error) {
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, fmt.Errorf("gemini: API key is required")
+	}
+	if cfg.ModelID == "" {
+		cfg.ModelID = DefaultGeminiAPIModel
+	}
+	if err := cfg.validateCommon(); err != nil {
+		return nil, err
+	}
+	endpoint := geminiAPIEndpoint(cfg.ModelID)
+	p := newGeminiHTTPProvider(apiKey, cfg, endpoint, &http.Client{})
+	p.stripSchemaKeys = true
+	return p, nil
+}
+
+// geminiAPIEndpoint builds the generateContent endpoint for the Gemini API.
+func geminiAPIEndpoint(modelID string) string {
+	return fmt.Sprintf(
+		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent",
+		modelID,
+	)
+}
+
+// newGeminiHTTPProvider is the internal constructor shared by the API-key path
+// and tests (which inject a test-server endpoint + client).
+func newGeminiHTTPProvider(apiKey string, cfg ClientConfig, endpoint string, hc *http.Client) *geminiHTTPProvider {
+	return &geminiHTTPProvider{
+		cfg:      cfg,
+		hc:       hc,
+		endpoint: endpoint,
+		headers:  map[string]string{"x-goog-api-key": apiKey},
+	}
 }
 
 // Generate calls Vertex AI, validates the response via ParseAndValidate, and
 // returns a GenerationResult. 5xx errors trigger bounded exponential-backoff
 // retries; all other errors are returned immediately (non-retryable).
-func (v *vertexGeminiProvider) Generate(ctx context.Context, req GenerationRequest) (GenerationResult, error) {
+func (v *geminiHTTPProvider) Generate(ctx context.Context, req GenerationRequest) (GenerationResult, error) {
 	if req.MaxCandidates < 1 || req.MaxCandidates > 10 {
 		return GenerationResult{}, fmt.Errorf("gemini: MaxCandidates must be in [1, 10]")
 	}
@@ -213,6 +282,7 @@ func (v *vertexGeminiProvider) Generate(ctx context.Context, req GenerationReque
 
 		res, err := v.doRequest(ctx, req.CorrelationID, prompt)
 		if err == nil {
+			res.ModelID = v.cfg.ModelID
 			return res, nil
 		}
 
@@ -228,8 +298,8 @@ func (v *vertexGeminiProvider) Generate(ctx context.Context, req GenerationReque
 	return GenerationResult{}, fmt.Errorf("%w: %v", ErrProviderUnavailable, lastErr)
 }
 
-// doRequest executes one HTTP attempt against the Vertex AI generateContent endpoint.
-func (v *vertexGeminiProvider) doRequest(
+// doRequest executes one HTTP attempt against the generateContent endpoint.
+func (v *geminiHTTPProvider) doRequest(
 	ctx context.Context,
 	correlationID uuid.UUID,
 	prompt string,
@@ -238,6 +308,9 @@ func (v *vertexGeminiProvider) doRequest(
 	defer cancel()
 
 	body := buildVertexRequest(prompt, v.cfg.MaxOutputTokens, v.cfg.Temperature)
+	if v.stripSchemaKeys && body.GenerationConfig != nil {
+		stripUnsupportedSchemaKeys(body.GenerationConfig.ResponseSchema)
+	}
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
 		return GenerationResult{}, fmt.Errorf("gemini: marshal request: %w", err)
@@ -249,6 +322,9 @@ func (v *vertexGeminiProvider) doRequest(
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Correlation-ID", correlationID.String())
+	for k, val := range v.headers {
+		httpReq.Header.Set(k, val)
+	}
 
 	resp, err := v.hc.Do(httpReq)
 	if err != nil {
@@ -308,13 +384,69 @@ type vertexPart struct {
 }
 
 type genConfig struct {
-	Temperature      float64 `json:"temperature"`
-	MaxOutputTokens  int     `json:"maxOutputTokens"`
+	Temperature     float64 `json:"temperature"`
+	MaxOutputTokens int     `json:"maxOutputTokens"`
 	// ResponseMimeType requests structured JSON output from the model.
-	ResponseMimeType string  `json:"responseMimeType,omitempty"`
+	ResponseMimeType string         `json:"responseMimeType,omitempty"`
+	ResponseSchema   map[string]any `json:"responseSchema,omitempty"`
 }
 
 func buildVertexRequest(prompt string, maxTokens int, temp float64) vertexRequest {
+	// DECISION-001: Use Vertex AI native response schema enforcement.
+	// This constrains the model's output grammar at the API level,
+	// providing stronger guarantees than prompt-guided JSON + post-hoc validation.
+	responseSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"candidates": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"mutation_type": map[string]any{
+							"type": "string",
+							"enum": []string{"split_transaction", "delay_and_resubmit", "introduce_shell_entity"},
+						},
+						"declared_change": map[string]any{
+							"type":      "string",
+							"maxLength": 1024,
+						},
+						"mutation_spec": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"split_count": map[string]any{
+									"type": "integer", "minimum": 2, "maximum": 20,
+								},
+								"threshold_cents": map[string]any{
+									"type": "integer", "minimum": 1,
+								},
+								"delay_minutes": map[string]any{
+									"type": "integer", "minimum": 1, "maximum": 1440,
+								},
+							},
+							"additionalProperties": false,
+						},
+						"rationale": map[string]any{
+							"type": "string", "maxLength": 4096,
+						},
+						"tags": map[string]any{
+							"type":     "array",
+							"items":    map[string]any{"type": "string", "maxLength": 64},
+							"maxItems": 20,
+						},
+						"eiv_confidence": map[string]any{
+							"type": "number", "minimum": 0.0, "maximum": 1.0,
+						},
+					},
+					"required":             []string{"mutation_type", "declared_change", "mutation_spec", "rationale"},
+					"additionalProperties": false,
+				},
+				"minItems": 1,
+			},
+		},
+		"required": []string{"candidates"},
+	}
+
 	return vertexRequest{
 		Contents: []vertexContent{{
 			Role:  "user",
@@ -324,6 +456,7 @@ func buildVertexRequest(prompt string, maxTokens int, temp float64) vertexReques
 			Temperature:      temp,
 			MaxOutputTokens:  maxTokens,
 			ResponseMimeType: "application/json",
+			ResponseSchema:   responseSchema,
 		},
 	}
 }
@@ -367,6 +500,29 @@ func extractCandidatesJSON(rawBody []byte) ([]byte, int, int, error) {
 		vr.UsageMetadata.PromptTokenCount,
 		vr.UsageMetadata.CandidatesTokenCount,
 		nil
+}
+
+// stripUnsupportedSchemaKeys recursively removes response-schema keywords that
+// the Gemini API rejects but Vertex AI accepts. Currently that is
+// additionalProperties; the schema tree is walked through maps and arrays
+// (properties/items), leaving enums and scalars untouched. Safe on nil.
+func stripUnsupportedSchemaKeys(schema map[string]any) {
+	for k, v := range schema {
+		if k == "additionalProperties" {
+			delete(schema, k)
+			continue
+		}
+		switch t := v.(type) {
+		case map[string]any:
+			stripUnsupportedSchemaKeys(t)
+		case []any:
+			for _, item := range t {
+				if m, ok := item.(map[string]any); ok {
+					stripUnsupportedSchemaKeys(m)
+				}
+			}
+		}
+	}
 }
 
 // ─── Prompt builder ───────────────────────────────────────────────────────────

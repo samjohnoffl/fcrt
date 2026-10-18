@@ -1,0 +1,61 @@
+# Render Blueprint for FCRT (free tier).
+#
+#   Render dashboard → New → Blueprint → point at this repo.
+#   Secrets marked `sync: false` are prompted for in the dashboard.
+#
+# The free plan spins the service down when idle, so the first request after a
+# pause takes a few seconds. Migrations are applied on each deploy by overriding
+# the start command; the API is then started normally.
+#
+# For the background worker, add a second service with:
+#   dockerCommand: /fcrt-worker
+
+services:
+  - type: web
+    name: fcrt-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: frankfurt
+    healthCheckPath: /healthz
+    autoDeploy: false
+    envVars:
+      - key: API_PORT
+        value: "8080"
+      - key: AUTH_MODE
+        value: local
+      - key: AUTH_SESSION_TTL_HOURS
+        value: "12"
+      - key: MIGRATIONS_DIR
+        value: /migrations
+      - key: LOG_LEVEL
+        value: info
+      # Prompted for in the dashboard — never stored in the repo.
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTH_USERS
+        sync: false
+      - key: AUTH_SESSION_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: CORS_ORIGINS
+        sync: false
+
+  # One-shot migration runner. Render has no job primitive on the free plan, so
+  # this is deployed, run once (Clear build cache / manual shell), then removed —
+  # or run `psql` against the database with the SQL in migrations/ instead.
+  - type: web
+    name: fcrt-migrate
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: /migrate up
+    plan: free
+    region: frankfurt
+    envVars:
+      - key: MIGRATIONS_DIR
+        value: /migrations
+      - key: DATABASE_URL
+        sync: false

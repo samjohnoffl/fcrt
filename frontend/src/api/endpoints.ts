@@ -1,9 +1,41 @@
 import { api } from './client'
 import type {
   Cohort, CreateCohortRequest, CoverageSummary,
-  EvidenceBundle, ExperimentDetail, ExperimentPair,
+  EvidenceBundle, ExperimentDetailResponse, ExperimentPair,
   CreateExperimentRequest, ScenarioProposal,
+  Campaign, CreateCampaignRequest, BenchmarkResponse,
+  RegressionVerifyResponse, LoginResponse, Principal,
+  AppUser, CreateUserRequest, UpdateUserRequest, AuditEvent,
 } from './types'
+
+/* ── Authentication ── */
+export const authApi = {
+  login:  (username: string, password: string) =>
+    api.post<LoginResponse>('/auth/login', { username, password }),
+  me:     () => api.get<Principal>('/auth/me'),
+  logout: () => api.post<{ status: string }>('/auth/logout', {}),
+}
+
+/* ── User management (admin only) ── */
+export const userApi = {
+  list:   ()                       => api.get<AppUser[]>('/users'),
+  create: (r: CreateUserRequest)   => api.post<AppUser>('/users', r),
+  update: (username: string, r: UpdateUserRequest) =>
+    api.patch<AppUser>(`/users/${encodeURIComponent(username)}`, r),
+  remove: (username: string)       =>
+    api.delete<{ status: string }>(`/users/${encodeURIComponent(username)}`),
+}
+
+/* ── Audit log (admin only) ── */
+export const auditApi = {
+  list: (params?: { limit?: number; event_type?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.event_type) q.set('event_type', params.event_type)
+    const qs = q.toString()
+    return api.get<AuditEvent[]>(`/audit${qs ? `?${qs}` : ''}`)
+  },
+}
 
 /* ── Cohorts ── */
 export const cohortApi = {
@@ -25,7 +57,7 @@ export const scenarioApi = {
 /* ── Experiments ── */
 export const experimentApi = {
   list:     ()              => api.get<ExperimentPair[]>('/experiments'),
-  get:      (id: string)    => api.get<ExperimentDetail>(`/experiments/${id}`),
+  get:      (id: string)    => api.get<ExperimentDetailResponse>(`/experiments/${id}`),
   create:   (r: CreateExperimentRequest) => api.post<ExperimentPair>('/experiments', r),
   evidence: (id: string)    => api.get<EvidenceBundle>(`/experiments/${id}/evidence`),
 }
@@ -33,4 +65,26 @@ export const experimentApi = {
 /* ── Coverage ── */
 export const coverageApi = {
   get: () => api.get<CoverageSummary>('/coverage'),
+}
+
+/* ── Campaigns ── */
+export const campaignApi = {
+  list:      ()                       => api.get<Campaign[]>('/campaigns'),
+  get:       (id: string)             => api.get<Campaign>(`/campaigns/${id}`),
+  create:    (r: CreateCampaignRequest) => api.post<Campaign>('/campaigns', r),
+  benchmark: (id: string, candidates?: number) =>
+    api.get<BenchmarkResponse>(
+      `/campaigns/${id}/benchmark${candidates ? `?candidates=${candidates}` : ''}`,
+    ),
+}
+
+/* ── Regression Test Pack (PRODUCT_SPEC item 7) ── */
+export const regressionApi = {
+  /** Download the regression pack as a JSON file (auth header attached). */
+  download: (limit?: number) =>
+    api.download(
+      `/regression/pack${limit ? `?limit=${limit}` : ''}`,
+      'regression-pack.json',
+    ),
+  verify: (pack: unknown) => api.post<RegressionVerifyResponse>('/regression/verify', pack),
 }

@@ -13,21 +13,30 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
+	"github.com/yourorg/financial-crime-red-team/internal/audit"
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
 	"github.com/yourorg/financial-crime-red-team/internal/coverage"
+	"github.com/yourorg/financial-crime-red-team/internal/evidence"
 	"github.com/yourorg/financial-crime-red-team/internal/experiment"
+	"github.com/yourorg/financial-crime-red-team/internal/job"
 	"github.com/yourorg/financial-crime-red-team/internal/scenario"
 )
 
 // RouterConfig holds all dependencies needed to assemble the router.
 type RouterConfig struct {
-	Verifier     AuthVerifier
-	BankRepo     *bank.Repository
-	ScenarioRepo *scenario.Repository
+	Verifier       AuthVerifier
+	Credentials    Credentials    // username/password directory (AUTH_MODE=local)
+	UserAdmin      UserAdmin      // user management (nil = endpoints return 501)
+	Signer         *SessionSigner // session token signer (AUTH_MODE=local)
+	BankRepo       *bank.Repository
+	ScenarioRepo   *scenario.Repository
 	ExperimentRepo *experiment.Repository
-	CoverageRepo *coverage.Repository
-	Provider     scenario.GeminiProvider // nil = Vertex AI not configured
-	CORSOrigins  []string
+	CoverageRepo   *coverage.Repository
+	AuditRepo      *audit.Repository
+	JobRepo        *job.Repository
+	EvidenceRepo   *evidence.Repository
+	Provider       scenario.GeminiProvider // nil = Vertex AI not configured
+	CORSOrigins    []string
 }
 
 // NewRouter builds and returns the fully-configured chi router.
@@ -45,38 +54,74 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	})
 
 	// Instantiate handlers.
-	cohortH := NewCohortHandler(cfg.BankRepo)
-	scenarioH := NewScenarioHandler(cfg.ScenarioRepo, cfg.BankRepo, cfg.Provider)
-	experimentH := NewExperimentHandler(cfg.ExperimentRepo, cfg.BankRepo, cfg.ScenarioRepo, cfg.CoverageRepo)
+	cohortH := NewCohortHandler(cfg.BankRepo, cfg.JobRepo)
+	scenarioH := NewScenarioHandler(cfg.ScenarioRepo, cfg.BankRepo, cfg.AuditRepo, cfg.Provider)
+	experimentH := NewExperimentHandler(cfg.ExperimentRepo, cfg.BankRepo, cfg.ScenarioRepo, cfg.CoverageRepo, cfg.EvidenceRepo)
 	coverageH := NewCoverageHandler(cfg.CoverageRepo)
+	auditH := NewAuditHandler(cfg.AuditRepo)
+	campaignH := NewCampaignHandler(cfg.ExperimentRepo, cfg.CoverageRepo)
+	regressionH := NewRegressionHandler(cfg.ExperimentRepo, cfg.BankRepo)
+	authH := NewAuthHandler(cfg.Credentials, cfg.Signer, cfg.AuditRepo)
+	usersH := NewUserHandler(cfg.UserAdmin, cfg.AuditRepo)
 
-	// /api/v1 — all routes require authentication (AC-07.1, T-01).
+	// /api/v1 — authentication + role-based authorization (AC-07, T-01).
+	//
+	// Policy: every authenticated route requires at least `analyst`; the audit
+	// log and user management additionally require `admin`.
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(AuthMiddleware(cfg.Verifier))
+		// Public: obtain a session token.
+		r.Post("/auth/login", authH.Login)
 
-		// Cohorts
-		r.Get("/cohorts", cohortH.ListCohorts)
-		r.Post("/cohorts", cohortH.CreateCohort)
-		r.Get("/cohorts/{id}", cohortH.GetCohort)
-		r.Get("/cohorts/{id}/summary", cohortH.GetCohortSummary)
-		r.Post("/cohorts/{id}/lock", cohortH.LockCohort)
+		r.Group(func(r chi.Router) {
+			r.Use(AuthMiddleware(cfg.Verifier))
+			r.Use(RequireRole(RoleAnalyst))
 
-		// Scenarios (AC-03, T-10)
-		r.Get("/scenarios", scenarioH.ListScenarios)
-		r.Post("/scenarios", scenarioH.RequestScenario)
-		r.Get("/scenarios/{id}", scenarioH.GetScenario)
-		r.Patch("/scenarios/{id}/approve", scenarioH.ApproveScenario)
-		r.Patch("/scenarios/{id}/reject", scenarioH.RejectScenario)
+			// Session introspection.
+			r.Get("/auth/me", authH.Me)
+			r.Post("/auth/logout", authH.Logout)
 
-		// Experiments (AC-04, AC-06)
-		r.Get("/experiments", experimentH.ListExperiments)
-		r.Post("/experiments", experimentH.CreateExperiment)
-		r.Get("/experiments/{id}", experimentH.GetExperiment)
-		r.Get("/experiments/{id}/evidence", experimentH.GetEvidence)
-		r.Post("/experiments/{id}/replay", experimentH.ReplayExperiment)
+			// Cohorts.
+			r.Get("/cohorts", cohortH.ListCohorts)
+			r.Post("/cohorts", cohortH.CreateCohort)
+			r.Get("/cohorts/{id}", cohortH.GetCohort)
+			r.Get("/cohorts/{id}/summary", cohortH.GetCohortSummary)
+			r.Post("/cohorts/{id}/lock", cohortH.LockCohort)
 
-		// Coverage (AC-05)
-		r.Get("/coverage", coverageH.GetCoverage)
+			// Scenarios (AC-03, T-10).
+			r.Get("/scenarios", scenarioH.ListScenarios)
+			r.Post("/scenarios", scenarioH.RequestScenario)
+			r.Get("/scenarios/{id}", scenarioH.GetScenario)
+			r.Patch("/scenarios/{id}/approve", scenarioH.ApproveScenario)
+			r.Patch("/scenarios/{id}/reject", scenarioH.RejectScenario)
+
+			// Experiments (AC-04, AC-06).
+			r.Get("/experiments", experimentH.ListExperiments)
+			r.Post("/experiments", experimentH.CreateExperiment)
+			r.Get("/experiments/{id}", experimentH.GetExperiment)
+			r.Get("/experiments/{id}/evidence", experimentH.GetEvidence)
+			r.Post("/experiments/{id}/replay", experimentH.ReplayExperiment)
+
+			// Coverage (AC-05).
+			r.Get("/coverage", coverageH.GetCoverage)
+
+			// Campaigns.
+			r.Get("/campaigns", campaignH.ListCampaigns)
+			r.Post("/campaigns", campaignH.CreateCampaign)
+			r.Get("/campaigns/{id}", campaignH.GetCampaign)
+			r.Get("/campaigns/{id}/coverage", campaignH.GetCampaignCoverage)
+			r.Get("/campaigns/{id}/benchmark", campaignH.GetCampaignBenchmark)
+
+			// Regression Test Pack (PRODUCT_SPEC item 7).
+			r.Get("/regression/pack", regressionH.GetPack)
+			r.Post("/regression/verify", regressionH.VerifyPack)
+
+			// ── Admin-only ──────────────────────────────────────────────────
+			r.With(RequireRole(RoleAdmin)).Get("/audit", auditH.ListAuditEvents)
+			r.With(RequireRole(RoleAdmin)).Get("/users", usersH.List)
+			r.With(RequireRole(RoleAdmin)).Post("/users", usersH.Create)
+			r.With(RequireRole(RoleAdmin)).Patch("/users/{username}", usersH.Update)
+			r.With(RequireRole(RoleAdmin)).Delete("/users/{username}", usersH.Delete)
+		})
 	})
 
 	return r

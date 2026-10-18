@@ -110,11 +110,11 @@ export function EvidenceViewer() {
             <div className="metric-grid">
               <div>
                 <div className="metric-label">Baseline alerts</div>
-                <div className="metric-value" style={{ fontSize: 24 }}>{bundle.aml_diff.baseline_count}</div>
+                <div className="metric-value" style={{ fontSize: 24 }}>{bundle.aml_diff.baseline_alert_count}</div>
               </div>
               <div>
                 <div className="metric-label">Variant alerts</div>
-                <div className="metric-value" style={{ fontSize: 24 }}>{bundle.aml_diff.variant_count}</div>
+                <div className="metric-value" style={{ fontSize: 24 }}>{bundle.aml_diff.variant_alert_count}</div>
               </div>
               <div>
                 <div className="metric-label">Evasion Δ</div>

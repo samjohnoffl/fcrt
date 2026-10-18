@@ -75,8 +75,12 @@ func (r *Repository) GetSummary(ctx context.Context) (Summary, error) {
 }
 
 // RecordTriggers increments times_triggered for each rule in ruleIDs (AC-05.1).
-// Rules not yet in the table are inserted with times_triggered=1 and weight=0.
-// Rules already present get their weight recalculated: weight = 1/(times_triggered+1).
+// Rules not yet in the table are inserted with times_triggered=1 and weight=1/2.
+// Rules already present get their weight recalculated using inverse frequency:
+//
+//	weight = 1 / (times_triggered + 1)
+//
+// (DECISION-002 option B: inverse frequency algorithm).
 func (r *Repository) RecordTriggers(ctx context.Context, ruleIDs []aml.RuleID, ruleVersion string) error {
 	for _, rid := range ruleIDs {
 		_, err := r.pool.Exec(ctx, `
@@ -86,11 +90,8 @@ func (r *Repository) RecordTriggers(ctx context.Context, ruleIDs []aml.RuleID, r
 			  SET times_triggered  = rule_coverage.times_triggered + 1,
 			      last_triggered_at = NOW(),
 			      rule_version      = $3,
-			      -- AC-05.2: uncovered rules (times_triggered=0) score max (1.0).
-			      -- After each trigger, weight decreases toward 0.
-			      coverage_weight   = GREATEST(0.0,
-			        1.0 - (rule_coverage.times_triggered + 1)::numeric / 20.0
-			      )`,
+			      -- DECISION-002: inverse frequency weight = 1 / (times_triggered + 1)
+			      coverage_weight   = 1.0::numeric / (rule_coverage.times_triggered + 1)::numeric`,
 			uuid.New(), string(rid), ruleVersion,
 		)
 		if err != nil {

@@ -33,6 +33,6 @@ export function StatusBadge({ status }: Props) {
 
 export function DeltaBadge({ delta }: { delta: number }) {
   if (delta === 0) return <span className="delta-zero">0</span>
-  if (delta > 0) return <span className="delta-positive">+{delta} ⚠</span>
+  if (delta > 0) return <span className="delta-positive">+{delta}</span>
   return <span className="delta-negative">{delta}</span>
 }

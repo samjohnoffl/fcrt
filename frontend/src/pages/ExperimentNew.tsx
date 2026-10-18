@@ -226,7 +226,7 @@ export function ExperimentNew() {
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button className="btn btn-secondary" onClick={() => setStep('config')}>← Back</button>
               <button className="btn btn-primary" onClick={() => mut.mutate(form)} disabled={mut.isPending}>
-                {mut.isPending ? <><LoadingState title="" /> Running…</> : '⚗ Execute Experiment'}
+                {mut.isPending ? <><LoadingState title="" /> Running…</> : 'Execute experiment'}
               </button>
             </div>
           </div>

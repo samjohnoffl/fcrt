@@ -10,25 +10,28 @@ export function ExperimentDetail() {
   const { id } = useParams<{ id: string }>()
   const nav = useNavigate()
 
-  const { data: exp, isLoading, error } = useQuery({
+  const { data: detail, isLoading, error } = useQuery({
     queryKey: ['experiment', id],
     queryFn: () => experimentApi.get(id!),
     enabled: !!id,
     // Poll while running
-    refetchInterval: (q) => q.state.data?.status === 'running' ? 3000 : false,
+    refetchInterval: (q) => q.state.data?.pair?.status === 'running' ? 3000 : false,
   })
 
   if (isLoading) return (
     <><PageHeader title="Experiment" /><div className="page-body"><LoadingState /></div></>
   )
-  if (error || !exp) return (
+  if (error || !detail) return (
     <><PageHeader title="Experiment" /><div className="page-body"><ErrorState title="Failed to load experiment" body={String(error)} /></div></>
   )
 
+  // Backend returns { pair, outcome, runs }. Unwrap for readability.
+  const exp = detail.pair
+  const outcome = detail.outcome
+  const baseline = detail.runs.find(r => r.run_type === 'baseline')
+  const variant  = detail.runs.find(r => r.run_type === 'variant')
+
   const isComplete = exp.status === 'completed'
-  const outcome = exp.outcome
-  const baseline = exp.baseline
-  const variant  = exp.variant
 
   return (
     <>
@@ -38,7 +41,7 @@ export function ExperimentDetail() {
         actions={
           isComplete && (
             <button className="btn btn-secondary btn-sm" onClick={() => nav(`/experiments/${id}/evidence`)}>
-              📦 View Evidence Bundle
+              View evidence bundle
             </button>
           )
         }
@@ -63,8 +66,8 @@ export function ExperimentDetail() {
           <div className="metric-card">
             <div className="metric-label">Outcome</div>
             <div style={{ marginTop: 8, fontSize: 13 }}>
-              {isComplete
-                ? (outcome?.outcome_unchanged
+              {isComplete && outcome
+                ? (outcome.outcome_unchanged
                     ? <span style={{ color: 'var(--text-secondary)' }}>Unchanged</span>
                     : <span style={{ color: outcome.evasion_delta > 0 ? 'var(--error)' : 'var(--success)' }}>
                         {outcome.evasion_delta > 0 ? 'Evasion detected' : 'Alerts increased'}
@@ -85,7 +88,7 @@ export function ExperimentDetail() {
                 <div className="compare-count baseline">{baseline.alert_count}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>alerts generated</div>
                 <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', marginTop: 12, color: 'var(--text-muted)' }}>
-                  run: {new Date(baseline.run_at).toLocaleString()}
+                  run: {new Date(baseline.started_at).toLocaleString()}
                 </div>
               </div>
               <div className="compare-side">
@@ -93,7 +96,7 @@ export function ExperimentDetail() {
                 <div className="compare-count variant">{variant.alert_count}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>alerts generated</div>
                 <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', marginTop: 12, color: 'var(--text-muted)' }}>
-                  run: {new Date(variant.run_at).toLocaleString()}
+                  run: {new Date(variant.started_at).toLocaleString()}
                 </div>
               </div>
             </div>

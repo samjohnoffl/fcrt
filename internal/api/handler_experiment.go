@@ -10,12 +10,14 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,6 +26,7 @@ import (
 	"github.com/yourorg/financial-crime-red-team/internal/aml"
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
 	"github.com/yourorg/financial-crime-red-team/internal/coverage"
+	"github.com/yourorg/financial-crime-red-team/internal/evidence"
 	"github.com/yourorg/financial-crime-red-team/internal/experiment"
 	"github.com/yourorg/financial-crime-red-team/internal/scenario"
 )
@@ -34,6 +37,7 @@ type ExperimentHandler struct {
 	bankRepo     *bank.Repository
 	scenarioRepo *scenario.Repository
 	covRepo      *coverage.Repository
+	evidenceRepo *evidence.Repository
 }
 
 // NewExperimentHandler creates an ExperimentHandler.
@@ -42,12 +46,14 @@ func NewExperimentHandler(
 	bankRepo *bank.Repository,
 	scenarioRepo *scenario.Repository,
 	covRepo *coverage.Repository,
+	evidenceRepo *evidence.Repository,
 ) *ExperimentHandler {
 	return &ExperimentHandler{
 		expRepo:      expRepo,
 		bankRepo:     bankRepo,
 		scenarioRepo: scenarioRepo,
 		covRepo:      covRepo,
+		evidenceRepo: evidenceRepo,
 	}
 }
 
@@ -55,18 +61,55 @@ func NewExperimentHandler(
 
 // ListExperiments is intentionally minimal: the experiment_pair table is queried.
 // Full pagination is a post-v1 enhancement (DECISIONS.md).
+// experimentListItem flattens a Pair with its outcome summary for list views.
+type experimentListItem struct {
+	experiment.Pair
+	EvasionDelta        *int     `json:"evasion_delta,omitempty"`
+	NewAlertRuleIDs     []string `json:"new_alert_rule_ids,omitempty"`
+	DroppedAlertRuleIDs []string `json:"dropped_alert_rule_ids,omitempty"`
+	OutcomeUnchanged    *bool    `json:"outcome_unchanged,omitempty"`
+}
+
+// ListExperiments returns all experiment pairs, newest first, with their
+// outcome summary (evasion delta + rule diff) when available.
 func (h *ExperimentHandler) ListExperiments(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []any{})
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+	summaries, err := h.expRepo.ListPairSummaries(r.Context(), limit)
+	if err != nil {
+		slog.Error("list experiments", "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to list experiments")
+		return
+	}
+
+	items := make([]experimentListItem, 0, len(summaries))
+	for _, s := range summaries {
+		item := experimentListItem{Pair: s.Pair}
+		if s.Outcome != nil {
+			d := s.Outcome.EvasionDelta
+			u := s.Outcome.OutcomeUnchanged
+			item.EvasionDelta = &d
+			item.OutcomeUnchanged = &u
+			item.NewAlertRuleIDs = ruleIDsToStr(s.Outcome.NewAlertRuleIDs)
+			item.DroppedAlertRuleIDs = ruleIDsToStr(s.Outcome.DroppedAlertRuleIDs)
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 // ─── POST /api/v1/experiments ────────────────────────────────────────────────
 
 type createExperimentRequest struct {
-	CohortID           uuid.UUID  `json:"cohort_id"`
-	ScenarioProposalID *uuid.UUID `json:"scenario_proposal_id"` // optional
-	Name               string     `json:"name"`
-	DeclaredChange     string     `json:"declared_change"`
-	MutationType       string     `json:"mutation_type"`
+	CohortID           uuid.UUID      `json:"cohort_id"`
+	ScenarioProposalID *uuid.UUID     `json:"scenario_proposal_id"` // optional
+	Name               string         `json:"name"`
+	DeclaredChange     string         `json:"declared_change"`
+	MutationType       string         `json:"mutation_type"`
 	MutationSpec       map[string]any `json:"mutation_spec"`
 }
 
@@ -197,6 +240,16 @@ func (h *ExperimentHandler) CreateExperiment(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	// Persist the evidence bundle (PRODUCT_SPEC item 7). Non-fatal: the
+	// experiment is already committed and reproducible via the outcome.
+	if h.evidenceRepo != nil {
+		if bundle, err := h.buildEvidenceBundle(r.Context(), result.Pair); err != nil {
+			slog.Warn("build evidence bundle", "pair_id", result.Pair.ID, "err", err)
+		} else if err := h.evidenceRepo.Save(r.Context(), bundle); err != nil {
+			slog.Warn("persist evidence bundle", "pair_id", result.Pair.ID, "err", err)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, result.Pair)
 }
 
@@ -236,22 +289,99 @@ func (h *ExperimentHandler) GetExperiment(w http.ResponseWriter, r *http.Request
 
 // ─── GET /api/v1/experiments/{id}/evidence ───────────────────────────────────
 
-// evidenceBundle is the response body for AC-06.2.
-// All required keys are always present; values may be zero if no data yet.
-type evidenceBundle struct {
-	CohortSnapshot  any    `json:"cohort_snapshot"`
-	ScenarioParams  any    `json:"scenario_params"`
-	AMLDiff         any    `json:"aml_diff"`
-	CoverageDelta   any    `json:"coverage_delta"`
-	GeminiTrace     any    `json:"gemini_trace"`
-	Checksum        string `json:"checksum"`
-	// Limitations documents what this evidence bundle cannot prove (AC-06).
+// evidenceResponse is the API response for AC-06.2: the persisted bundle plus
+// honest limitation labels. All required keys are always present.
+type evidenceResponse struct {
+	evidence.Bundle
 	Limitations []string `json:"limitations"`
 }
 
+// evidenceLimitations documents what an evidence bundle cannot prove (AC-06).
+func evidenceLimitations(controlHash string) []string {
+	return []string{
+		"This evidence bundle covers synthetic data only — no real transactions.",
+		"AML rule version is pinned to " + controlHash + "; re-running with a different version may produce different results.",
+		"Gemini scenario generation is probabilistic; identical cohorts may produce different proposals across runs.",
+		"Coverage weight reflects historical trigger counts only — rules not present in the DB have unknown coverage.",
+		"Coverage delta is not snapshotted per run: coverage_delta is empty by design to keep the bundle reproducible (see GET /api/v1/coverage for cumulative state).",
+	}
+}
+
+// buildEvidenceBundle assembles the reproducible evidence artifact for a pair
+// from the persisted runs and outcome. CreatedAt is derived from stable data so
+// the checksum is reproducible across calls.
+func (h *ExperimentHandler) buildEvidenceBundle(ctx context.Context, pair experiment.Pair) (evidence.Bundle, error) {
+	outcome, err := h.expRepo.GetOutcome(ctx, pair.ID)
+	if err != nil {
+		return evidence.Bundle{}, fmt.Errorf("get outcome: %w", err)
+	}
+	runs, err := h.expRepo.ListRunsForPair(ctx, pair.ID)
+	if err != nil {
+		return evidence.Bundle{}, fmt.Errorf("list runs: %w", err)
+	}
+
+	var baselineAlerts, variantAlerts []aml.Alert
+	var baselineCount, variantCount int
+	for _, rr := range runs {
+		switch rr.RunType {
+		case experiment.RunTypeBaseline:
+			baselineAlerts = rr.RawAlerts
+			baselineCount = rr.AlertCount
+		case experiment.RunTypeVariant:
+			variantAlerts = rr.RawAlerts
+			variantCount = rr.AlertCount
+		}
+	}
+
+	snapshot := evidence.CohortSnapshot{CohortID: pair.CohortID, Seed: pair.Seed}
+	if cohort, err := h.bankRepo.GetCohort(ctx, pair.CohortID); err == nil {
+		snapshot.Predicate = cohort.Predicate
+		snapshot.EntityCount = cohort.Manifest.EntityCount
+		snapshot.TxCount = cohort.Manifest.TxCount
+		if cohort.LockedAt != nil {
+			snapshot.LockedAt = *cohort.LockedAt
+		}
+	}
+
+	createdAt := outcome.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = pair.UpdatedAt
+	}
+
+	if baselineAlerts == nil {
+		baselineAlerts = []aml.Alert{}
+	}
+	if variantAlerts == nil {
+		variantAlerts = []aml.Alert{}
+	}
+
+	b := evidence.Bundle{
+		RunID:          pair.ID,
+		AMLRuleVersion: pair.ControlHash,
+		CohortSnapshot: snapshot,
+		BaselineAlerts: baselineAlerts,
+		VariantAlerts:  variantAlerts,
+		AMLDiff: aml.AlertDiff{
+			BaselineAlertCount:  baselineCount,
+			VariantAlertCount:   variantCount,
+			EvasionDelta:        outcome.EvasionDelta,
+			NewAlertRuleIDs:     outcome.NewAlertRuleIDs,
+			DroppedAlertRuleIDs: outcome.DroppedAlertRuleIDs,
+		},
+		CoverageDelta: []coverage.RuleCoverage{},
+		CreatedAt:     createdAt,
+	}
+	sum, err := evidence.ComputeChecksum(b)
+	if err != nil {
+		return evidence.Bundle{}, err
+	}
+	b.Checksum = sum
+	return b, nil
+}
+
 // GetEvidence returns the evidence bundle (AC-06.2, T-05).
-// The checksum is SHA-256 of the bundle JSON for integrity verification (T-05).
-// Limitations are always documented honestly (no invented metrics).
+// It serves the persisted bundle when available, otherwise builds and persists
+// one. Pass ?download=1 to receive it as a JSON file attachment.
 func (h *ExperimentHandler) GetEvidence(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUID(w, chi.URLParam(r, "id"))
 	if !ok {
@@ -269,55 +399,46 @@ func (h *ExperimentHandler) GetEvidence(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	outcome, _ := h.expRepo.GetOutcome(r.Context(), id)
-	runs, _ := h.expRepo.ListRunsForPair(r.Context(), id)
-
-	// Build the evidence bundle without computing a checksum yet.
-	bundle := evidenceBundle{
-		CohortSnapshot: map[string]any{
-			"cohort_id":     pair.CohortID,
-			"manifest_hash": pair.ManifestHash,
-			"control_hash":  pair.ControlHash,
-		},
-		ScenarioParams: map[string]any{
-			"declared_change": pair.DeclaredChange,
-			"mutation_type":   pair.MutationType,
-			"mutation_spec":   pair.MutationSpec,
-		},
-		AMLDiff: map[string]any{
-			"evasion_delta":         outcome.EvasionDelta,
-			"new_alert_rule_ids":    outcome.NewAlertRuleIDs,
-			"dropped_alert_rule_ids": outcome.DroppedAlertRuleIDs,
-			"outcome_unchanged":     outcome.OutcomeUnchanged,
-		},
-		CoverageDelta: map[string]any{
-			"baseline_run_alert_count": baselineCount(runs),
-			"variant_run_alert_count":  variantCount(runs),
-		},
-		GeminiTrace: map[string]any{
-			"note": "Gemini trace is stored in the scenario_proposal row referenced at experiment creation",
-			"pair_id": pair.ID,
-		},
-		// Limitations are always honest (product principle: never invent metrics).
-		Limitations: []string{
-			"This evidence bundle covers synthetic data only — no real transactions.",
-			"AML rule version is pinned to " + pair.ControlHash + "; re-running with a different version may produce different results.",
-			"Gemini scenario generation is probabilistic; identical cohorts may produce different proposals across runs.",
-			"Coverage weight reflects historical trigger counts only — rules not present in the DB have unknown coverage.",
-		},
+	// Prefer the persisted bundle (immutable artifact); fall back to building it.
+	var bundle evidence.Bundle
+	if h.evidenceRepo != nil {
+		if got, err := h.evidenceRepo.Get(r.Context(), id); err == nil {
+			bundle = got
+		} else if !errors.Is(err, evidence.ErrBundleNotFound) {
+			slog.Warn("get persisted evidence bundle", "pair_id", id, "err", err)
+		}
+	}
+	if bundle.RunID == uuid.Nil {
+		built, err := h.buildEvidenceBundle(r.Context(), pair)
+		if err != nil {
+			slog.Error("build evidence bundle", "pair_id", id, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to build evidence bundle")
+			return
+		}
+		bundle = built
+		if h.evidenceRepo != nil {
+			if err := h.evidenceRepo.Save(r.Context(), built); err != nil {
+				slog.Warn("persist evidence bundle", "pair_id", id, "err", err) // non-fatal
+			}
+		}
 	}
 
-	// Compute SHA-256 checksum of the bundle (T-05, AC-06.1).
-	bundleBytes, err := json.Marshal(bundle)
-	if err != nil {
-		slog.Error("marshal evidence bundle", "pair_id", id, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to build evidence bundle")
+	resp := evidenceResponse{Bundle: bundle, Limitations: evidenceLimitations(pair.ControlHash)}
+
+	if r.URL.Query().Get("download") != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=\"evidence_%s.json\"", id))
+		w.WriteHeader(http.StatusOK)
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(resp); err != nil {
+			slog.Error("write evidence download", "pair_id", id, "err", err)
+		}
 		return
 	}
-	sum := sha256.Sum256(bundleBytes)
-	bundle.Checksum = fmt.Sprintf("%x", sum)
 
-	writeJSON(w, http.StatusOK, bundle)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ─── POST /api/v1/experiments/{id}/replay ────────────────────────────────────
@@ -414,11 +535,11 @@ func (h *ExperimentHandler) ReplayExperiment(w http.ResponseWriter, r *http.Requ
 
 	// Build the original evidence bundle checksum from the stored pair.
 	origBundle := map[string]any{
-		"cohort_id":             pair.CohortID,
-		"manifest_hash":         pair.ManifestHash,
-		"control_hash":          pair.ControlHash,
-		"evasion_delta":         originalOutcome.EvasionDelta,
-		"new_alert_rule_ids":    originalOutcome.NewAlertRuleIDs,
+		"cohort_id":              pair.CohortID,
+		"manifest_hash":          pair.ManifestHash,
+		"control_hash":           pair.ControlHash,
+		"evasion_delta":          originalOutcome.EvasionDelta,
+		"new_alert_rule_ids":     originalOutcome.NewAlertRuleIDs,
 		"dropped_alert_rule_ids": originalOutcome.DroppedAlertRuleIDs,
 	}
 	origBytes, _ := json.Marshal(origBundle)
@@ -426,11 +547,11 @@ func (h *ExperimentHandler) ReplayExperiment(w http.ResponseWriter, r *http.Requ
 
 	// Build the replayed bundle checksum.
 	replayBundle := map[string]any{
-		"cohort_id":             pair.CohortID,
-		"manifest_hash":         replayResult.Pair.ManifestHash,
-		"control_hash":          replayResult.Pair.ControlHash,
-		"evasion_delta":         replayResult.Outcome.EvasionDelta,
-		"new_alert_rule_ids":    replayResult.Outcome.NewAlertRuleIDs,
+		"cohort_id":              pair.CohortID,
+		"manifest_hash":          replayResult.Pair.ManifestHash,
+		"control_hash":           replayResult.Pair.ControlHash,
+		"evasion_delta":          replayResult.Outcome.EvasionDelta,
+		"new_alert_rule_ids":     replayResult.Outcome.NewAlertRuleIDs,
 		"dropped_alert_rule_ids": replayResult.Outcome.DroppedAlertRuleIDs,
 	}
 	replayBytes, _ := json.Marshal(replayBundle)
@@ -454,24 +575,4 @@ func (h *ExperimentHandler) ReplayExperiment(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-func baselineCount(runs []experiment.RunResult) int {
-	for _, r := range runs {
-		if r.RunType == experiment.RunTypeBaseline {
-			return r.AlertCount
-		}
-	}
-	return 0
-}
-
-func variantCount(runs []experiment.RunResult) int {
-	for _, r := range runs {
-		if r.RunType == experiment.RunTypeVariant {
-			return r.AlertCount
-		}
-	}
-	return 0
 }

@@ -139,7 +139,7 @@ type Account struct {
 	CohortID     uuid.UUID      `json:"cohort_id"`
 	EntityID     uuid.UUID      `json:"entity_id"`
 	AccountType  AccountType    `json:"account_type"`
-	Currency     string         `json:"currency"`     // ISO 4217
+	Currency     string         `json:"currency"`      // ISO 4217
 	BalanceCents int64          `json:"balance_cents"` // integer, not float
 	OpenedAt     time.Time      `json:"opened_at"`
 	Attributes   map[string]any `json:"attributes"` // stored as JSONB; any requires comment per AGENTS.md

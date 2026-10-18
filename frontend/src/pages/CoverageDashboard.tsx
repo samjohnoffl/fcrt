@@ -109,7 +109,7 @@ export function CoverageDashboard() {
                           <td className="td-mono td-muted">{r.rule_version}</td>
                           <td>
                             {r.times_triggered === 0
-                              ? <span style={{ color: 'var(--error)', fontWeight: 600 }}>0 ⚠</span>
+                              ? <span style={{ color: 'var(--error)', fontWeight: 600 }}>0 uncovered</span>
                               : r.times_triggered}
                           </td>
                           <td>

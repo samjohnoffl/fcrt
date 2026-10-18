@@ -579,7 +579,7 @@ func TestMutation_SplitTransaction_ReducesLargeTx(t *testing.T) {
 	}
 
 	mutated, err := applyMutation(sel, MutationSplitTransaction, map[string]any{
-		"split_count":    3,
+		"split_count":     3,
 		"threshold_cents": int64(100_000),
 	})
 	if err != nil {

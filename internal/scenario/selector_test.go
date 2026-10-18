@@ -45,7 +45,7 @@ func TestWeights_SumNotOne(t *testing.T) {
 
 func TestWeights_NegativeComponent(t *testing.T) {
 	w := SelectionWeights{
-		Version: WeightsVersion,
+		Version:  WeightsVersion,
 		Coverage: -0.1, Novelty: 0.6, Validity: 0.3, EIV: 0.2,
 	}
 	if err := w.Validate(); err == nil {
@@ -270,7 +270,7 @@ func TestSelect_DuplicateRejected(t *testing.T) {
 func TestSelect_RankingDescendingByScore(t *testing.T) {
 	// Use a weights config that emphasises EIV so we can control ordering.
 	w := SelectionWeights{
-		Version: WeightsVersion,
+		Version:  WeightsVersion,
 		Coverage: 0.0, Novelty: 0.0, Validity: 0.0, EIV: 1.0,
 	}
 	sel, _ := NewSelector(w)
@@ -547,42 +547,42 @@ func TestSelect_DownstreamExperiment_Reproducible(t *testing.T) {
 
 func makeSplitCandidate(corrID uuid.UUID, change string, tags []string) Candidate {
 	return Candidate{
-		ID:             uuid.New(),
-		CorrelationID:  corrID,
-		MutationType:   MutationSplitTransaction,
-		DeclaredChange: change,
-		MutationSpec:   MutationSpec{SplitCount: 3, ThresholdCents: 100_000},
-		Rationale:      "Splitting avoids per-transaction reporting threshold.",
-		Tags:           tags,
-		GeneratedAt:    time.Now(),
+		ID:              uuid.New(),
+		CorrelationID:   corrID,
+		MutationType:    MutationSplitTransaction,
+		DeclaredChange:  change,
+		MutationSpec:    MutationSpec{SplitCount: 3, ThresholdCents: 100_000},
+		Rationale:       "Splitting avoids per-transaction reporting threshold.",
+		Tags:            tags,
+		GeneratedAt:     time.Now(),
 		ScoreComponents: ScoreComponents{Validity: 1.0, EIV: 0.6},
 	}
 }
 
 func makeDelayCandidate(corrID uuid.UUID, change string, tags []string) Candidate {
 	return Candidate{
-		ID:             uuid.New(),
-		CorrelationID:  corrID,
-		MutationType:   MutationDelayAndResubmit,
-		DeclaredChange: change,
-		MutationSpec:   MutationSpec{DelayMinutes: 120},
-		Rationale:      "Delay reduces rapid-movement alert probability.",
-		Tags:           tags,
-		GeneratedAt:    time.Now(),
+		ID:              uuid.New(),
+		CorrelationID:   corrID,
+		MutationType:    MutationDelayAndResubmit,
+		DeclaredChange:  change,
+		MutationSpec:    MutationSpec{DelayMinutes: 120},
+		Rationale:       "Delay reduces rapid-movement alert probability.",
+		Tags:            tags,
+		GeneratedAt:     time.Now(),
 		ScoreComponents: ScoreComponents{Validity: 1.0, EIV: 0.5},
 	}
 }
 
 func makeShellCandidate(corrID uuid.UUID, change string, tags []string) Candidate {
 	return Candidate{
-		ID:             uuid.New(),
-		CorrelationID:  corrID,
-		MutationType:   MutationIntroduceShell,
-		DeclaredChange: change,
-		MutationSpec:   MutationSpec{ThresholdCents: 500_000},
-		Rationale:      "Shell entities hide beneficial ownership.",
-		Tags:           tags,
-		GeneratedAt:    time.Now(),
+		ID:              uuid.New(),
+		CorrelationID:   corrID,
+		MutationType:    MutationIntroduceShell,
+		DeclaredChange:  change,
+		MutationSpec:    MutationSpec{ThresholdCents: 500_000},
+		Rationale:       "Shell entities hide beneficial ownership.",
+		Tags:            tags,
+		GeneratedAt:     time.Now(),
 		ScoreComponents: ScoreComponents{Validity: 1.0, EIV: 0.7},
 	}
 }

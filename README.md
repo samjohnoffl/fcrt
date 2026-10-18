@@ -1,6 +1,6 @@
 # Financial Crime AI Red Team (FCRT)
 
-> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 214 tests passing.
+> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 305 tests passing (227 Go + 78 Vitest).
 
 A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection models** using synthetic data, Gemini 1.5 Pro scenario generation, and counterfactual experiments. No real customer PII is ever used.
 
@@ -16,7 +16,7 @@ A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection mod
 │  ├─ ExperimentList / ExperimentDetail / EvidenceViewer        │
 │  └─ CoverageDashboard                                          │
 └────────────────────────┬──────────────────────────────────────┘
-                         │ HTTPS + Firebase ID token (Bearer)
+                         │ HTTPS + Bearer session token
                          ▼
 ┌───────────────────────────────────────────────────────────────┐
 │  Go REST API (Cloud Run) — cmd/api                            │
@@ -37,7 +37,8 @@ A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection mod
 
 | Concern | Decision |
 |---|---|
-| **Auth** | Firebase ID tokens verified server-side on every request (no session cookies) |
+| **AuthN** | Username/password login → HMAC-signed session token (no cookies); `AUTH_MODE=firebase` swaps in Firebase ID tokens (see DECISION-011) |
+| **AuthZ** | Two hierarchical roles on every route: `analyst` (full workspace) < `admin` (+ user management, audit log) |
 | **Secrets** | All credentials via env vars / ADC — none in source |
 | **AI output** | Treated as untrusted data: schema-validated before any use |
 | **Reproducibility** | Every experiment seeded deterministically; seed stored in cohort |
@@ -84,7 +85,7 @@ rule_coverage (rule_id PRIMARY KEY, trigger_count, last_triggered_at,
 | Frontend | React 18 + TypeScript 5, Vite 5 |
 | Database | PostgreSQL 16 (Cloud SQL) |
 | AI | Gemini 1.5 Pro via Vertex AI REST |
-| Auth | Firebase Authentication (ID tokens) |
+| Auth | Username/password session tokens (default), Firebase ID tokens (optional) |
 | Hosting | Firebase Hosting (SPA) + Cloud Run (API) |
 | Migrations | golang-migrate |
 
@@ -104,29 +105,50 @@ financial-crime-red-team/
 │   ├── ACCEPTANCE_CRITERIA.md
 │   └── DECISIONS.md
 ├── cmd/
-│   └── api/main.go                   # REST API server (Cloud Run)
+│   ├── api/main.go                   # REST API server (Cloud Run)
+│   ├── worker/main.go                # Background job worker (SKIP LOCKED)
+│   └── migrate/main.go               # golang-migrate wrapper (/migrate in the image)
 ├── internal/
 │   ├── api/
-│   │   ├── middleware.go             # Firebase auth middleware
+│   │   ├── middleware.go             # Bearer auth middleware (verifier-agnostic)
+│   │   ├── authz.go                  # Roles, Principal, RequireRole middleware
+│   │   ├── auth_session.go           # Users, session tokens, /auth handlers
 │   │   ├── response.go              # JSON envelope helpers
 │   │   ├── router.go                # chi route registration
 │   │   ├── handler_cohort.go
 │   │   ├── handler_scenario.go
 │   │   ├── handler_experiment.go
-│   │   └── handler_coverage.go
+│   │   ├── handler_coverage.go
+│   │   ├── handler_campaign.go       # campaigns + benchmark
+│   │   ├── handler_regression.go     # regression test pack
+│   │   └── handler_audit.go
 │   ├── bank/                         # Synthetic bank generator + repository
 │   ├── aml/                          # Mock AML rule harness
 │   ├── scenario/                     # Gemini adapter + schema validator
 │   ├── experiment/                   # Counterfactual experiment runner
 │   ├── coverage/                     # Rule coverage tracker
-│   └── evidence/                     # Evidence bundle types
+│   ├── evidence/                     # Evidence bundle types + PostgreSQL repository
+│   ├── job/                          # DB-backed work queue (DECISION-004)
+│   ├── regression/                   # Reproducible regression test packs
+│   ├── genome/                       # Genome encoding + diversity selection
+│   ├── payment/                      # Payment intelligence / AML features
+│   ├── benchmark/                    # Strategy comparison harness
+│   └── audit/                        # Audit event log (DECISION-006)
 ├── frontend/                         # React/TypeScript SPA
 │   └── src/
-│       ├── pages/                    # 7 analyst pages
+│       ├── pages/                    # Analyst pages (incl. Discovery, Benchmark Lab)
 │       ├── components/               # Shared UI components
+│       ├── lib/                      # Pure analytics helpers (discovery.ts)
 │       ├── api/                      # Typed API client
 │       └── tests/                    # Vitest tests
-├── migrations/                       # PostgreSQL migration files
+├── migrations/                       # PostgreSQL migration files (golang-migrate)
+├── scripts/gcp-setup.sh              # GCP provisioning: Cloud SQL, Run, secrets, hosting
+├── firebase.json                     # Firebase Hosting (SPA + /api/** rewrite to Cloud Run)
+├── docker-compose.yml                # Local dev stack: postgres + migrate + api + worker
+├── Dockerfile                        # API + worker + migrate image (distroless)
+├── Makefile                          # Developer entry points (make help)
+├── .dockerignore
+├── .gcloudignore
 ├── .env.example                      # Environment variable template
 ├── go.mod / go.sum
 └── .gitignore
@@ -136,12 +158,55 @@ financial-crime-red-team/
 
 ## Getting Started (Local Dev)
 
+### Option A — Docker Compose (fastest)
+
+Brings up PostgreSQL 16, runs migrations, and starts the API + worker — no local toolchain needed.
+
+```bash
+# 1. Start the stack (postgres + migrate + api + worker)
+make up
+#    or: docker compose up --build -d
+
+# 2. The API is now live (local test credentials: admin/admin)
+curl -s localhost:8080/healthz
+#    {"data":{"status":"ok"}}
+
+# 3. Get a session token, then call an authenticated endpoint
+TOKEN=$(curl -s -X POST localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin"}' | sed -E 's/.*"token":"([^"]+)".*/\1/')
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/cohorts
+
+# 4. Tail logs / stop
+make logs
+make down           # add -v via: docker compose down -v  (wipes the DB volume)
+```
+
+If host port 5432 or 8080 is already taken, override the published ports:
+
+```bash
+FCRT_PG_PORT=5433 FCRT_API_PORT=8081 docker compose up --build -d
+```
+
+The API runs with `AUTH_MODE=local`, so the built-in test accounts work
+(`admin/admin` → Administrator, `analyst/analyst` → Analyst). They are seeded
+into the `app_user` table on first boot; after that, manage accounts in the app
+under **Administration → Users**. Start the frontend separately (Option B step
+5) — it proxies `/api` to the API.
+
+### Option B — Local toolchain
+
 ### Prerequisites
 
 - Go 1.22+
 - Node 20+
 - PostgreSQL 16 (local or Docker)
-- `golang-migrate` CLI: `go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest`
+
+No external migrate CLI is required — the repo ships one:
+
+```bash
+go run ./cmd/migrate up        # or: /migrate up (inside the image)
+```
 
 ### Setup
 
@@ -149,19 +214,72 @@ financial-crime-red-team/
 # 1. Copy env template and edit
 cp .env.example .env
 
-# 2. Run DB migrations
-migrate -path ./migrations -database "$DATABASE_URL" up
+# 2. Run DB migrations (uses the in-repo golang-migrate wrapper)
+DATABASE_URL=postgres://... go run ./cmd/migrate up
 
-# 3. Start API (leave FIREBASE_PROJECT unset for dev — uses NoopVerifier)
+# 3. Start API (auth defaults to AUTH_MODE=local with test accounts)
 DATABASE_URL=postgres://... go run ./cmd/api
 
-# 4. Start frontend dev server
+# 4. Start the worker (cohort generation + experiment jobs)
+DATABASE_URL=postgres://... go run ./cmd/worker
+
+# 5. Start frontend dev server
 cd frontend && npm install && npm run dev
 ```
 
+`make help` lists all developer targets (build, test, vet, up/down, migrate…).
+
+`cmd/migrate` accepts `up`, `down` (one step), `reset` (all the way down) and
+`version`. It reads `DATABASE_URL` and `MIGRATIONS_DIR` (default `/migrations`)
+and keeps the same `schema_migrations` bookkeeping as the official
+`migrate/migrate` image, so it can take over an existing database.
+
 The frontend runs on `http://localhost:5173` and proxies API calls to `http://localhost:8080`.
 
-In local dev, pass any non-empty Bearer token — the `NoopVerifier` accepts all tokens when `FIREBASE_PROJECT` is unset.
+In local dev the API issues its own session tokens. Sign in to obtain one:
+
+```bash
+TOK="Authorization: Bearer $(curl -s -X POST localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin"}' | sed -E 's/.*"token":"([^"]+)".*/\1/')"
+echo "$TOK"
+```
+
+The `admin` account can do everything; `analyst` has the full red-team workflow
+but no access to user management or the audit log. Alternatively set
+`AUTH_MODE=none` to bypass auth entirely (local dev only).
+
+### Who can do what
+
+| Capability | `analyst` | `admin` |
+|---|:---:|:---:|
+| View dashboard, cohorts, scenarios, experiments, coverage | ✅ | ✅ |
+| Create/lock cohorts, request & approve scenarios, run experiments | ✅ | ✅ |
+| Verify/export the regression pack | ✅ | ✅ |
+| Manage users (create, role, reset password, disable, delete) | — | ✅ |
+| Read the audit log | — | ✅ |
+
+The difference is enforced twice: server-side by `RequireRole` middleware on
+every route, and in the UI (the **Administration** nav section and its pages are
+hidden for analysts; visiting `/users` or `/audit` redirects to the dashboard).
+Both roles are documented on the sign-in screen and on the Users page.
+
+### Smoke test (end-to-end)
+
+```bash
+TOK="Authorization: Bearer $(curl -s -X POST localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin"}' \
+  | sed -E 's/.*"token":"([^"]+)".*/\1/')"
+# Create a cohort → enqueues a generation job
+curl -s -X POST localhost:8080/api/v1/cohorts -H "$TOK" -H 'Content-Type: application/json' \
+  -d '{"name":"Demo","seed":42,"predicate":{},"window_days":90}'
+# Wait for the worker to generate + lock it, then run an experiment
+curl -s -X POST localhost:8080/api/v1/experiments -H "$TOK" -H 'Content-Type: application/json' \
+  -d '{"cohort_id":"<ID>","name":"Split","declared_change":"split high-value tx",
+       "mutation_type":"split_transaction","mutation_spec":{"split_count":3,"threshold_cents":100000}}'
+# Export the reproducible regression pack
+curl -s localhost:8080/api/v1/regression/pack -H "$TOK" -o regression-pack.json
+```
 
 ---
 
@@ -171,8 +289,14 @@ In local dev, pass any non-empty Bearer token — the `NoopVerifier` accepts all
 |---|---|---|---|
 | `DATABASE_URL` | **Yes** | — | PostgreSQL DSN |
 | `API_PORT` | No | `8080` | TCP port |
-| `FIREBASE_PROJECT` | Prod | — | GCP project for Firebase auth. Unset = NoopVerifier (dev only) |
-| `VERTEX_PROJECT` | No | — | GCP project for Vertex AI. Unset = POST /scenarios returns 503 |
+| `AUTH_MODE` | No | `local` | `local` (username/password) \| `firebase` (ID tokens) \| `none` (dev only) |
+| `AUTH_USERS` | No | `admin:admin:admin,analyst:analyst:analyst` | Seeds `app_user` on first boot (`username:password:role`); never clobbers existing accounts |
+| `AUTH_SESSION_SECRET` | Prod | dev value | HMAC key that signs session tokens — set a long random value |
+| `AUTH_SESSION_TTL_HOURS` | No | `12` | Session token lifetime |
+| `FIREBASE_PROJECT` | `firebase` mode | — | GCP project for Firebase ID-token verification |
+| `GEMINI_API_KEY` | No | — | Google AI Studio key — preferred; takes precedence over `VERTEX_PROJECT`. Unset = `POST /scenarios` returns 503 |
+| `GEMINI_MODEL` | No | `gemini-3.8-flash` | Model override for AI scenario generation |
+| `VERTEX_PROJECT` | No | — | GCP project for Vertex AI (fallback when no API key) |
 | `VERTEX_LOCATION` | No | `us-central1` | Vertex AI region |
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed origins |
 | `LOG_LEVEL` | No | `info` | `debug\|info\|warn\|error` |
@@ -185,13 +309,15 @@ Based on `docs/THREAT_MODEL.md` (STRIDE analysis):
 
 | Control | Implementation |
 |---|---|
-| **T-01** Unauthenticated access | `AuthMiddleware` blocks all `/api/v1/*` without valid Firebase ID token |
+| **T-01** Unauthenticated access | `AuthMiddleware` blocks all `/api/v1/*` without a valid Bearer token (only `/auth/login` and `/healthz` are public) |
+| **T-01a** Authorization | `RequireRole` enforces reader/writer/admin roles per route; role gating is server-side |
 | **T-03** SQL injection | All DB queries use parameterised pgx statements — no string interpolation |
 | **T-04** Prompt injection | Gemini output schema-validated before use; never executed or interpolated into SQL |
-| **T-10** Privilege escalation | Scenario approval requires auth; approver UID stored in DB row |
+| **T-10** Privilege escalation | Scenario approval requires `analyst`+; approver identity stored in DB row and audit log |
 | **AC-03.2** Approval gate | Experiments can only reference `status=approved` proposals |
 | **AC-05** Coverage | `rule_coverage` table tracks uncovered rules at max weight |
 | **AC-06** Evidence | Evidence bundles include provenance hash, cohort seed, and honest limitation labels |
+| **Login audit** | Every login attempt (success/failure) is written to `audit_event` |
 | **Secret hygiene** | `.gitignore` excludes `.env`, `*.pem`, `*.p12`, `service-account*.json` |
 | **Log safety** | `sanitiseLog()` strips newlines from all error messages before logging |
 
@@ -199,7 +325,42 @@ Based on `docs/THREAT_MODEL.md` (STRIDE analysis):
 
 ## API Reference
 
-All endpoints require `Authorization: Bearer <firebase-id-token>`.
+All endpoints require `Authorization: Bearer <token>`, where `<token>` is the
+`token` returned by `POST /api/v1/auth/login`. Exceptions: `/auth/login` and
+`/healthz` are public.
+
+### Authentication
+
+| Method | Path | Min role | Description |
+|---|---|---|---|
+| POST | `/api/v1/auth/login` | public | `{username,password}` → `{token, expires_at, user:{username,role}}` |
+| GET | `/api/v1/auth/me` | analyst | Current principal (`{username, role}`) |
+| POST | `/api/v1/auth/logout` | analyst | No-op for stateless tokens (client discards it) |
+
+### User management (admin only)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/users` | List accounts |
+| POST | `/api/v1/users` | Create `{username,password,role}` |
+| PATCH | `/api/v1/users/{username}` | Update `{role?,password?,disabled?}` |
+| DELETE | `/api/v1/users/{username}` | Delete an account |
+
+Passwords must be at least 6 characters. An admin cannot disable, demote or
+delete **their own** account (self-lockout guard) — changing your own password
+is allowed. Every create/update/delete is written to the audit log.
+
+**Roles** (hierarchical — `admin` includes everything `analyst` can do):
+
+| Role | Can do |
+|---|---|
+| `analyst` | The whole workspace: read everything, create/lock cohorts, request/approve/reject scenarios, run/replay experiments, verify & export the regression pack |
+| `admin` | analyst + user management + read the audit log |
+
+Every authenticated route requires at least `analyst`; `/users` and `/audit`
+require `admin`.
+Violations return `403 insufficient_role`; missing/invalid tokens return
+`401 missing_token` / `401 invalid_token` / `401 token_expired`.
 
 ### Cohorts
 | Method | Path | Description |
@@ -225,7 +386,7 @@ All endpoints require `Authorization: Bearer <firebase-id-token>`.
 | GET | `/api/v1/experiments` | List experiments |
 | POST | `/api/v1/experiments` | Run baseline+variant experiment |
 | GET | `/api/v1/experiments/{id}` | Get experiment + runs |
-| GET | `/api/v1/experiments/{id}/evidence` | Get evidence bundle (AC-06) |
+| GET | `/api/v1/experiments/{id}/evidence` | Get persisted evidence bundle (AC-06); `?download=1` returns it as a JSON file |
 | POST | `/api/v1/experiments/{id}/replay` | Replay experiment (reproducibility) |
 
 ### Coverage
@@ -233,22 +394,174 @@ All endpoints require `Authorization: Bearer <firebase-id-token>`.
 |---|---|---|
 | GET | `/api/v1/coverage` | Rule coverage summary (sorted by weight) |
 
+### Campaigns
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/campaigns` | List campaigns |
+| POST | `/api/v1/campaigns` | Create campaign |
+| GET | `/api/v1/campaigns/{id}` | Get campaign |
+| GET | `/api/v1/campaigns/{id}/coverage` | Campaign coverage |
+| GET | `/api/v1/campaigns/{id}/benchmark` | Run strategy comparison |
+
+### Regression Test Pack (PRODUCT_SPEC item 7)
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/regression/pack` | Export a reproducible regression pack (JSON download) |
+| POST | `/api/v1/regression/verify` | Import + verify a pack's checksum/shape |
+
+### Audit
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/audit` | List audit events (`org_id` optional; defaults to the default org) |
+
 ### System
 | Method | Path | Description |
 |---|---|---|
 | GET | `/healthz` | Health probe (unauthenticated) |
+
+### Alert schema (PRODUCT_SPEC item 3)
+
+The AML harness emits alerts that are a simplified FinCEN SAR projection —
+identifiers only, never PII:
+
+```json
+{
+  "id": "…", "rule_id": "structuring_v1", "rule_version": "<control-hash>",
+  "entity_id": "…", "account_ids": ["…"], "tx_ids": ["…"],
+  "amount_cents": 2999700, "currency": "USD",
+  "subject_type": "individual", "activity_type": "structuring",
+  "severity": "medium", "description": "…", "detected_at": "…"
+}
+```
+
+### Evidence bundles (PRODUCT_SPEC item 7)
+
+Every experiment persists an immutable bundle to `evidence_bundle (JSONB)` with a
+SHA-256 checksum. `GET /api/v1/experiments/{id}/evidence` serves the persisted
+bundle (building and persisting one on first read if absent); add `?download=1`
+to receive it as a file attachment.
+
+> **Multi-tenancy note**: migration `000004` added `org_id NOT NULL` to every
+> table; migration `000006` sets the single `default` organisation as the column
+> default so single-tenant/local deployments work. Callers that know the real
+> org still pass `org_id` explicitly.
 
 ---
 
 ## Tests
 
 ```bash
-# Go backend (214 assertions, 0 failures)
+# Go unit tests (hermetic — integration tests skip in -short mode)
 go test -short ./...
 
-# Frontend (52 Vitest tests)
+# Go integration tests against a live, migrated database
+DATABASE_TEST_URL='postgres://fcrt:fcrt@localhost:5433/fincrime_redteam?sslmode=disable' \
+  go test ./...
+
+# Frontend
 cd frontend && npm test
 ```
+
+Current status: **345 tests** (250 Go + 95 frontend). In the default `-short`
+mode the DB-backed Go integration tests skip; with a migrated database reachable
+via `DATABASE_TEST_URL` all 250 run. Frontend tests cover the session layer, the
+role model, the dashboard, user management and the shared components.
+
+---
+
+## User Interface
+
+The frontend is a clean, light, material-flavoured product UI (React 18 + Vite,
+no component framework). Design tokens live in `frontend/src/index.css`;
+components never hard-code colour. Routes are code-split, so the charting
+library only loads on the pages that use it.
+
+| Area | Pages |
+|---|---|
+| Workspace | Dashboard, Cohorts, Scenarios, Experiments, Coverage, Discovery, Benchmark Lab |
+| Administration (admin only) | Users, Audit log |
+
+**Roles are visible, not just enforced.** The sign-in screen and the Users page
+both spell out what an analyst and an administrator can do; the sidebar groups
+admin-only pages under an *Administration* heading and shows the signed-in
+user's role; direct navigation to `/users` or `/audit` as an analyst redirects
+to the dashboard.
+
+---
+
+## Deployment
+
+### Frontend → Firebase Hosting
+
+Hosting is free (Spark plan) and serves the static `frontend/dist` bundle:
+
+```bash
+cd frontend && npm run build
+cd .. && firebase deploy --only hosting          # uses firebase.json + .firebaserc
+```
+
+`firebase.json` rewrites `/api/**` to the backend, so the SPA and API share an
+origin and no CORS or API-base configuration is needed in the build. **This
+rewrite only works when the backend is on Cloud Run / Cloud Functions** —
+Firebase Hosting cannot reverse-proxy to an arbitrary origin. For a non-GCP
+backend, point the frontend at the API's origin instead:
+
+```bash
+cd frontend
+VITE_API_BASE_URL=https://fcrt-api.fly.dev npm run build
+cd .. && firebase deploy --only hosting
+```
+
+...and allow the Hosting origin on the API via `CORS_ORIGINS`.
+
+### Backend → container host
+
+The backend is a single distroless image built from the repo `Dockerfile`
+(`fcrt-api`, `fcrt-worker`, `/migrate`). Ready-to-use configs are included for
+the two common free tiers:
+
+| Host | Config | Notes |
+|---|---|---|
+| Fly.io | [`fly.toml`](fly.toml) | `fly deploy`; secrets via `fly secrets set`; run `/migrate up` once via `fly console` |
+| Render | [`render.yaml`](render.yaml) | Blueprint deploy; secrets prompted in the dashboard; includes a one-shot `fcrt-migrate` service |
+
+Either way the API needs:
+
+- a PostgreSQL 16 database (`DATABASE_URL`) — Neon/Supabase free tiers work
+- `AUTH_MODE=local`, `AUTH_SESSION_SECRET` (a long random value), `AUTH_USERS`
+- `GEMINI_API_KEY` for AI scenario generation
+- `CORS_ORIGINS` set to the Firebase Hosting origin
+- `/migrate up` run once before the first boot
+
+### Alternative: all-GCP
+
+`scripts/gcp-setup.sh` provisions the whole stack on Google Cloud when billing
+is enabled on the project:
+
+```bash
+PROJECT_ID=my-project REGION=us-east1 ./scripts/gcp-setup.sh
+```
+
+It enables APIs, builds/pushes to Artifact Registry, creates Cloud SQL (private
+IP + VPC connector), a runtime service account and secrets, deploys `fcrt-api`
+and `fcrt-worker` to Cloud Run, runs migrations via a Cloud Run job using the
+image's `/migrate` binary, then builds and deploys the frontend to Firebase
+Hosting.
+
+Deployment artifacts:
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Builds `fcrt-api`, `fcrt-worker` and `/migrate` into one distroless image |
+| `fly.toml` | Fly.io app config (free tier) |
+| `render.yaml` | Render Blueprint (free tier, API + one-shot migration service) |
+| `scripts/gcp-setup.sh` | One-shot GCP provisioning + deploy |
+| `firebase.json` | Hosting config: serves `frontend/dist`, rewrites `/api/**` to the backend |
+| `.firebaserc` | Firebase project binding (rewritten by the setup script) |
+| `.gcloudignore` | Keeps build artifacts out of the image upload |
+
+> Rotate the shared `GEMINI_API_KEY` before any public deployment, and change
+> `AUTH_USERS` away from the default test credentials.
 
 ---
 

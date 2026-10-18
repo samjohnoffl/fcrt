@@ -25,8 +25,8 @@ var (
 func minimalSelection(txs []bank.Transaction) *bank.BatchSelection {
 	cohortID := uuid.MustParse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 	entityID := uuid.MustParse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
-	acct1    := uuid.MustParse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
-	acct2    := uuid.MustParse("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+	acct1 := uuid.MustParse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	acct2 := uuid.MustParse("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 
 	entities := []bank.Entity{{
 		ID: entityID, CohortID: cohortID, EntityType: bank.EntityTypeIndividual,
@@ -38,12 +38,12 @@ func minimalSelection(txs []bank.Transaction) *bank.BatchSelection {
 	}
 
 	return &bank.BatchSelection{
-		CohortID:    cohortID,
-		WindowStart: evalWindowStart,
-		WindowEnd:   evalWindowEnd,
-		Manifest:    bank.CohortManifest{CohortID: cohortID},
-		Entities:    entities,
-		Accounts:    accounts,
+		CohortID:     cohortID,
+		WindowStart:  evalWindowStart,
+		WindowEnd:    evalWindowEnd,
+		Manifest:     bank.CohortManifest{CohortID: cohortID},
+		Entities:     entities,
+		Accounts:     accounts,
 		Transactions: txs,
 	}
 }
@@ -209,7 +209,7 @@ func TestEvaluator_RapidMovement_Fires(t *testing.T) {
 	// Credit acct1 with $6,000 (above min $5,000).
 	// Then debit acct1 of $5,500 (92%) within 60 minutes.
 	txs := []bank.Transaction{
-		makeTx(acct2, acct1, 600_000, ts),                   // credit acct1
+		makeTx(acct2, acct1, 600_000, ts),                     // credit acct1
 		makeTx(acct1, acct2, 550_000, ts.Add(30*time.Minute)), // rapid debit
 	}
 	result := ev.Evaluate(minimalSelection(txs))
@@ -365,5 +365,48 @@ func TestEvaluator_RuleVersionMatchesConfigHash(t *testing.T) {
 	result := ev.Evaluate(minimalSelection(nil))
 	if result.RuleVersion != DefaultControlConfig().ConfigHash {
 		t.Errorf("RuleVersion %q != ConfigHash %q", result.RuleVersion, DefaultControlConfig().ConfigHash)
+	}
+}
+
+// ─── SAR-aligned alert fields (PRODUCT_SPEC item 3) ───────────────────────────
+
+func TestEvaluator_AlertHasSARFields_Structuring(t *testing.T) {
+	ev := defaultEvaluator(t)
+	acct1 := uuid.MustParse("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	acct2 := uuid.MustParse("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+	ts := evalWindowStart.Add(1 * time.Hour)
+
+	// 3 × $9,999 = $29,997 total suspicious amount.
+	var txs []bank.Transaction
+	for i := 0; i < 3; i++ {
+		txs = append(txs, makeTx(acct1, acct2, 999_900, ts.Add(time.Duration(i)*time.Hour)))
+	}
+	result := ev.Evaluate(minimalSelection(txs))
+
+	var found *Alert
+	for i := range result.Alerts {
+		if result.Alerts[i].RuleID == RuleStructuring {
+			found = &result.Alerts[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected structuring alert, got %d alerts", len(result.Alerts))
+	}
+
+	if found.AmountCents != 3*999_900 {
+		t.Errorf("AmountCents = %d, want %d", found.AmountCents, 3*999_900)
+	}
+	if found.Currency != string(bank.CurrencyUSD) {
+		t.Errorf("Currency = %q, want %q", found.Currency, bank.CurrencyUSD)
+	}
+	if found.SubjectType != string(bank.EntityTypeIndividual) {
+		t.Errorf("SubjectType = %q, want %q", found.SubjectType, bank.EntityTypeIndividual)
+	}
+	if found.ActivityType != "structuring" {
+		t.Errorf("ActivityType = %q, want structuring", found.ActivityType)
+	}
+	if len(found.TxIDs) != 3 {
+		t.Errorf("TxIDs = %d, want 3", len(found.TxIDs))
 	}
 }

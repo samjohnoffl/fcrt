@@ -2,14 +2,27 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/Layout'
+import { RoleGate } from '../components/RoleGate'
 import { StatusBadge, DeltaBadge } from '../components/StatusBadge'
 import { LoadingState, ErrorState, EmptyState } from '../components/StateViews'
-import { experimentApi } from '../api/endpoints'
+import { experimentApi, regressionApi } from '../api/endpoints'
 
 export function ExperimentList() {
   const nav = useNavigate()
   const [filter, setFilter] = useState<'all' | 'pending' | 'running' | 'completed' | 'failed'>('all')
+  const [packBusy, setPackBusy] = useState(false)
   const { data, isLoading, error } = useQuery({ queryKey: ['experiments'], queryFn: experimentApi.list })
+
+  const downloadPack = async () => {
+    setPackBusy(true)
+    try {
+      await regressionApi.download()
+    } catch (e) {
+      console.error('regression pack download failed', e)
+    } finally {
+      setPackBusy(false)
+    }
+  }
 
   const filtered = (data ?? [])
     .filter(e => filter === 'all' || e.status === filter)
@@ -20,7 +33,14 @@ export function ExperimentList() {
       <PageHeader
         title="Experiments"
         subtitle="Baseline vs. variant AML comparisons"
-        actions={<button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>⚗ New Experiment</button>}
+        actions={
+          <>
+            <button className="btn btn-ghost btn-sm" onClick={downloadPack} disabled={packBusy} title="Download a reproducible Regression Test Pack (JSON)">
+              {packBusy ? 'Preparing…' : 'Download regression pack'}
+            </button>
+            <RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>New experiment</button></RoleGate>
+          </>
+        }
       />
       <div className="page-body">
         <div className="filter-bar" style={{ marginBottom: 16 }}>
@@ -39,7 +59,7 @@ export function ExperimentList() {
             <EmptyState
               title="No experiments"
               body={filter !== 'all' ? `No ${filter} experiments.` : 'Run your first experiment to compare baseline vs. variant AML results.'}
-              action={filter === 'all' ? <button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>⚗ New Experiment</button> : undefined}
+              action={filter === 'all' ? <RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>New experiment</button></RoleGate> : undefined}
             />
           ) : (
             <div className="table-wrap">
@@ -63,7 +83,7 @@ export function ExperimentList() {
                       <td><StatusBadge status={e.status} /></td>
                       <td>
                         {e.status === 'completed'
-                          ? <DeltaBadge delta={0} />
+                          ? <DeltaBadge delta={e.evasion_delta ?? 0} />
                           : <span className="text-muted">—</span>}
                       </td>
                       <td className="td-mono td-muted">{e.control_hash?.slice(0, 8) ?? '—'}</td>

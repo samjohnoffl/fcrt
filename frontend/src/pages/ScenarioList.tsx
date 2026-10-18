@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/Layout'
+import { RoleGate } from '../components/RoleGate'
 import { StatusBadge } from '../components/StatusBadge'
 import { LoadingState, ErrorState, EmptyState } from '../components/StateViews'
 import { scenarioApi, cohortApi } from '../api/endpoints'
@@ -32,7 +33,7 @@ export function ScenarioList() {
       <PageHeader
         title="Scenarios"
         subtitle="Gemini-assisted AML evasion proposals"
-        actions={<button className="btn btn-primary btn-sm" onClick={() => setRequestDialog(true)}>✦ Request Scenario</button>}
+        actions={<RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => setRequestDialog(true)}>Request scenario</button></RoleGate>}
       />
       <div className="page-body">
         <div className="filter-bar" style={{ marginBottom: 16 }}>
@@ -50,7 +51,7 @@ export function ScenarioList() {
             <EmptyState
               title="No scenarios"
               body="Request a Gemini scenario proposal to get started."
-              action={<button className="btn btn-primary btn-sm" onClick={() => setRequestDialog(true)}>✦ Request Scenario</button>}
+              action={<RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => setRequestDialog(true)}>Request scenario</button></RoleGate>}
             />
           ) : (
             <div className="table-wrap">

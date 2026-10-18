@@ -215,8 +215,12 @@ type GenerationResult struct {
 	CorrelationID uuid.UUID
 
 	// PromptTokens and OutputTokens record usage for cost tracking.
-	PromptTokens  int
-	OutputTokens  int
+	PromptTokens int
+	OutputTokens int
+
+	// ModelID is the model that produced this result, recorded on the
+	// proposal for auditability (AC-03.1).
+	ModelID string
 }
 
 // SelectionResult is the output of the adaptive selector.

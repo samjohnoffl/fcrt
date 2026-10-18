@@ -64,4 +64,26 @@ describe('API client fetch behaviour', () => {
     const result = await api.get('/something')
     expect(result).toBeUndefined()
   })
+
+  it('calls the API on the same origin by default', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] })
+    const { api } = await import('../api/client')
+    await api.get('/cohorts')
+    const url = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0]
+    expect(url).toBe('/api/v1/cohorts')
+  })
+
+  it('honours VITE_API_BASE_URL for a backend on another origin', async () => {
+    // Re-import the module so the build-time constant is re-evaluated.
+    vi.resetModules()
+    vi.stubEnv('VITE_API_BASE_URL', 'https://fcrt-api.fly.dev/')
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] })
+    const { api } = await import('../api/client')
+    await api.get('/cohorts')
+    const url = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0]
+    // The trailing slash is normalised away.
+    expect(url).toBe('https://fcrt-api.fly.dev/api/v1/cohorts')
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
 })

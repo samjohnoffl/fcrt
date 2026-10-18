@@ -15,26 +15,29 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/yourorg/financial-crime-red-team/internal/audit"
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
 	"github.com/yourorg/financial-crime-red-team/internal/scenario"
 )
 
 // ScenarioHandler handles scenario proposal endpoints.
 type ScenarioHandler struct {
-	repo     *scenario.Repository
-	bankRepo *bank.Repository
-	provider scenario.GeminiProvider // nil = Vertex AI not configured; returns 503
+	repo      *scenario.Repository
+	bankRepo  *bank.Repository
+	auditRepo *audit.Repository
+	provider  scenario.GeminiProvider // nil = Vertex AI not configured; returns 503
 }
 
 // NewScenarioHandler creates a ScenarioHandler.
 // provider may be nil if Vertex AI credentials are not available; the
 // POST /scenarios endpoint will return 503 in that case.
-func NewScenarioHandler(repo *scenario.Repository, bankRepo *bank.Repository, provider scenario.GeminiProvider) *ScenarioHandler {
-	return &ScenarioHandler{repo: repo, bankRepo: bankRepo, provider: provider}
+func NewScenarioHandler(repo *scenario.Repository, bankRepo *bank.Repository, auditRepo *audit.Repository, provider scenario.GeminiProvider) *ScenarioHandler {
+	return &ScenarioHandler{repo: repo, bankRepo: bankRepo, auditRepo: auditRepo, provider: provider}
 }
 
 // ─── GET /api/v1/scenarios ───────────────────────────────────────────────────
@@ -80,7 +83,7 @@ type requestScenarioBody struct {
 func (h *ScenarioHandler) RequestScenario(w http.ResponseWriter, r *http.Request) {
 	if h.provider == nil {
 		writeError(w, http.StatusServiceUnavailable, "gemini_not_configured",
-			"Vertex AI is not configured on this instance — set VERTEX_PROJECT and GOOGLE_APPLICATION_CREDENTIALS")
+			"AI scenario generation is not configured on this instance — set GEMINI_API_KEY (or VERTEX_PROJECT for Vertex AI)")
 		return
 	}
 
@@ -141,11 +144,17 @@ func (h *ScenarioHandler) RequestScenario(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if len(result.Accepted) == 0 {
+		reasons := make([]string, 0, len(result.Rejected))
+		for _, rej := range result.Rejected {
+			reasons = append(reasons, string(rej.Reason)+": "+rej.Detail)
+		}
 		slog.Warn("gemini returned no valid candidates",
 			"correlation_id", corrID,
-			"rejected_count", len(result.Rejected))
+			"model", result.ModelID,
+			"rejected_count", len(result.Rejected),
+			"reasons", reasons)
 		writeError(w, http.StatusUnprocessableEntity, "no_valid_candidates",
-			"Gemini returned no candidates matching the approved schema")
+			"The model returned no candidates matching the approved schema — try again")
 		return
 	}
 
@@ -167,6 +176,12 @@ func (h *ScenarioHandler) RequestScenario(w http.ResponseWriter, r *http.Request
 		},
 	}
 
+	// Model that produced the proposal (for the audit trail).
+	model := result.ModelID
+	if model == "" {
+		model = "gemini"
+	}
+
 	p := scenario.Proposal{
 		ID:                    uuid.New(),
 		CohortID:              req.CohortID,
@@ -177,7 +192,7 @@ func (h *ScenarioHandler) RequestScenario(w http.ResponseWriter, r *http.Request
 		// Raw Gemini prompt + response stored verbatim (AC-03.1).
 		GeminiPrompt:   string(promptJSON),
 		GeminiResponse: string(respJSON),
-		GeminiModel:    "gemini-1.5-pro",
+		GeminiModel:    model,
 		CorrelationID:  corrID,
 	}
 
@@ -247,9 +262,36 @@ func (h *ScenarioHandler) setStatus(w http.ResponseWriter, r *http.Request, stat
 		writeError(w, http.StatusInternalServerError, "db_error", "Failed to update scenario status")
 		return
 	}
+
+	// Record audit event (DECISION-006).
+	if h.auditRepo != nil {
+		eventType := audit.EventScenarioApproved
+		if status == scenario.StatusRejected {
+			eventType = audit.EventScenarioRejected
+		}
+		auditEvent := audit.Event{
+			ID:         uuid.New(),
+			OrgID:      uuid.Nil, // resolved to the default org until auth→org mapping exists
+			EventType:  eventType,
+			ActorUID:   uid,
+			TargetType: "scenario_proposal",
+			TargetID:   p.ID,
+			Details: map[string]any{
+				"scenario_type": p.ScenarioType,
+				"description":   p.Description,
+				"status_before": "pending",
+				"status_after":  string(status),
+			},
+			CreatedAt: time.Now().UTC(),
+		}
+		if err := h.auditRepo.Record(r.Context(), auditEvent); err != nil {
+			slog.Error("audit record failed", "event", eventType, "err", err)
+		}
+	}
+
 	slog.Info("scenario status changed",
 		"id", id,
 		"status", status,
-		"by_uid", strings.ReplaceAll(uid, "\n", "")) // log-injection safe
+		"by_uid", strings.ReplaceAll(uid, "\n", ""))
 	writeJSON(w, http.StatusOK, p)
 }

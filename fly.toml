@@ -1,0 +1,53 @@
+# Fly.io deployment for the FCRT API (free tier: shared-cpu-1x + 256 MB).
+#
+#   fly launch --no-deploy --copy-config --name fcrt-api
+#   fly secrets set \
+#       DATABASE_URL='postgres://…' \
+#       AUTH_MODE=local \
+#       AUTH_USERS='admin:<strong-password>:admin,analyst:<strong-password>:analyst' \
+#       AUTH_SESSION_SECRET="$(openssl rand -hex 32)" \
+#       GEMINI_API_KEY='…' \
+#       GEMINI_MODEL=gemini-3.8-flash \
+#       CORS_ORIGINS='https://<project>.web.app'
+#   fly deploy
+#
+# Migrations: run them once before the first boot (or after any schema change).
+#   fly console --machine <id> -- /migrate up
+# The worker is the same image with a different command:
+#   fly machine run . --command /fcrt-worker  (or a second fly.toml with that command)
+
+app = "fcrt-api"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  API_PORT = "8080"
+  AUTH_MODE = "local"
+  AUTH_SESSION_TTL_HOURS = "12"
+  MIGRATIONS_DIR = "/migrations"
+  LOG_LEVEL = "info"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 60
+    soft_limit = 40
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

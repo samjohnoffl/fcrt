@@ -23,18 +23,18 @@ type TxPatternStep map[string]any
 
 // Proposal is a Gemini-generated scenario proposal awaiting human approval.
 type Proposal struct {
-	ID                     uuid.UUID      `json:"id"`
-	CohortID               uuid.UUID      `json:"cohort_id"`
-	Status                 Status         `json:"status"`
-	ScenarioType           string         `json:"scenario_type"`
-	Description            string         `json:"description"`
-	ExpectedEvasionVector  string         `json:"expected_evasion_vector"`
-	SuggestedTxPattern     []TxPatternStep `json:"suggested_tx_pattern"`
-	GeminiPrompt           string         `json:"gemini_prompt"`
-	GeminiResponse         string         `json:"gemini_response"`
-	GeminiModel            string         `json:"gemini_model"`
-	CorrelationID          uuid.UUID      `json:"correlation_id"`
-	ApprovedBy             string         `json:"approved_by,omitempty"`
-	CreatedAt              time.Time      `json:"created_at"`
-	UpdatedAt              time.Time      `json:"updated_at"`
+	ID                    uuid.UUID       `json:"id"`
+	CohortID              uuid.UUID       `json:"cohort_id"`
+	Status                Status          `json:"status"`
+	ScenarioType          string          `json:"scenario_type"`
+	Description           string          `json:"description"`
+	ExpectedEvasionVector string          `json:"expected_evasion_vector"`
+	SuggestedTxPattern    []TxPatternStep `json:"suggested_tx_pattern"`
+	GeminiPrompt          string          `json:"gemini_prompt"`
+	GeminiResponse        string          `json:"gemini_response"`
+	GeminiModel           string          `json:"gemini_model"`
+	CorrelationID         uuid.UUID       `json:"correlation_id"`
+	ApprovedBy            string          `json:"approved_by,omitempty"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
 }

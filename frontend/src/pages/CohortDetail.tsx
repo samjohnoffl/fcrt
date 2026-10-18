@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { PageHeader } from '../components/Layout'
+import { RoleGate } from '../components/RoleGate'
 import { StatusBadge } from '../components/StatusBadge'
 import { LoadingState, ErrorState } from '../components/StateViews'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -58,9 +59,9 @@ export function CohortDetail() {
         title={cohort.name}
         subtitle={`Cohort · ${id}`}
         actions={
-          <>
+          <RoleGate min="analyst">
             <button className="btn btn-secondary btn-sm" onClick={() => nav(`/experiments/new?cohort=${id}`)}>
-              ⚗ Run Experiment
+              Run experiment
             </button>
             <button
               className="btn btn-primary btn-sm"
@@ -68,9 +69,9 @@ export function CohortDetail() {
               disabled={locked}
               aria-disabled={locked}
             >
-              {locked ? '🔒 Locked' : 'Lock Cohort'}
+              {locked ? 'Locked' : 'Lock cohort'}
             </button>
-          </>
+          </RoleGate>
         }
       />
       <div className="page-body">

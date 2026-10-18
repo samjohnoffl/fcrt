@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { PageHeader } from '../components/Layout'
+import { RoleGate } from '../components/RoleGate'
 import { LoadingState, ErrorState, EmptyState } from '../components/StateViews'
 import { StatusBadge, DeltaBadge } from '../components/StatusBadge'
 import { coverageApi } from '../api/endpoints'
@@ -59,11 +60,11 @@ export function Dashboard() {
         title="Dashboard"
         subtitle="AML Red Team overview"
         actions={
-          <>
+          <RoleGate min="analyst">
             <button className="btn btn-secondary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button>
             <button className="btn btn-secondary btn-sm" onClick={() => nav('/scenarios')}>Request Scenario</button>
-            <button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>⚗ Run Experiment</button>
-          </>
+            <button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>Run experiment</button>
+          </RoleGate>
         }
       />
       <div className="page-body">
@@ -113,7 +114,7 @@ export function Dashboard() {
             <EmptyState
               title="No experiments yet"
               body="Run your first experiment to see results here."
-              action={<button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>⚗ Run Experiment</button>}
+              action={<RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>Run experiment</button></RoleGate>}
             />
           ) : (
             <div className="table-wrap">
@@ -134,7 +135,7 @@ export function Dashboard() {
                       <td><StatusBadge status={e.status} /></td>
                       <td>
                         {e.status === 'completed'
-                          ? <DeltaBadge delta={0} />
+                          ? <DeltaBadge delta={e.evasion_delta ?? 0} />
                           : <span className="text-muted">—</span>
                         }
                       </td>

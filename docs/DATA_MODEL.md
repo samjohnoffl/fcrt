@@ -153,15 +153,18 @@ Tracks which AML rules have been exercised.
 ---
 
 ### `evidence_bundle`
-Immutable, reproducible artifact of one experiment run.
+Immutable, reproducible artifact of one experiment run. One row per
+`experiment_pair` (unique on `experiment_id`); upserted by
+`internal/evidence.Repository` and served by `GET /experiments/{id}/evidence`.
 
 | Column | Type | Notes |
 |---|---|---|
 | id | UUID PK | |
-| experiment_id | UUID FK → experiment | |
-| bundle | JSONB NOT NULL | Full serialised evidence |
-| checksum | TEXT | SHA-256 of bundle JSON |
+| experiment_id | UUID FK → `experiment_pair` | unique; re-pointed from the legacy `experiment` table in migration `000008` |
+| bundle | JSONB NOT NULL | Full serialised `evidence.Bundle` |
+| checksum | TEXT NOT NULL | SHA-256 of bundle JSON (checksum field excluded) |
 | created_at | TIMESTAMPTZ | |
+| org_id | UUID FK → organisations | added in `000004`; defaults to the `default` org (`000006`) |
 
 ---
 

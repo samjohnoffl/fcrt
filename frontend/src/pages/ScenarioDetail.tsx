@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PageHeader } from '../components/Layout'
+import { RoleGate } from '../components/RoleGate'
 import { StatusBadge } from '../components/StatusBadge'
 import { LoadingState, ErrorState } from '../components/StateViews'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -44,7 +45,7 @@ export function ScenarioDetail() {
         title={s.scenario_type}
         subtitle={`Scenario · ${id}`}
         actions={
-          <>
+          <RoleGate min="analyst">
             <button
               className="btn btn-danger btn-sm"
               onClick={() => setDialog('reject')}
@@ -61,7 +62,7 @@ export function ScenarioDetail() {
             >
               Approve
             </button>
-          </>
+          </RoleGate>
         }
       />
       <div className="page-body">
@@ -125,7 +126,7 @@ export function ScenarioDetail() {
               className="btn btn-primary"
               onClick={() => nav(`/experiments/new?scenario=${id}&cohort=${s.cohort_id}`)}
             >
-              ⚗ Create Experiment from Scenario
+              Create experiment from scenario
             </button>
           </div>
         )}

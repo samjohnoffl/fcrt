@@ -18,16 +18,26 @@ const (
 )
 
 // Alert represents a single AML rule trigger.
+//
+// The schema is a simplified version of the FinCEN SAR fields (PRODUCT_SPEC
+// item 3): a subject, the involved accounts/transactions, the aggregate
+// suspicious amount and currency, the suspicious-activity type, severity and
+// a human-readable narrative. No real PII is ever present — IDs only.
 type Alert struct {
-	ID          uuid.UUID `json:"id"`
-	RuleID      RuleID    `json:"rule_id"`
-	RuleVersion string    `json:"rule_version"`
-	EntityID    uuid.UUID `json:"entity_id"`
+	ID          uuid.UUID   `json:"id"`
+	RuleID      RuleID      `json:"rule_id"`
+	RuleVersion string      `json:"rule_version"`
+	EntityID    uuid.UUID   `json:"entity_id"`
 	AccountIDs  []uuid.UUID `json:"account_ids"`
 	TxIDs       []uuid.UUID `json:"tx_ids"`
-	Severity    string    `json:"severity"` // "low" | "medium" | "high"
-	Description string    `json:"description"`
-	DetectedAt  time.Time `json:"detected_at"`
+	// ── Simplified FinCEN SAR-aligned fields (PRODUCT_SPEC item 3) ──
+	AmountCents  int64     `json:"amount_cents"`  // aggregate suspicious amount
+	Currency     string    `json:"currency"`      // ISO 4217
+	SubjectType  string    `json:"subject_type"`  // bank.EntityType of the subject
+	ActivityType string    `json:"activity_type"` // structuring | layering | rapid_movement
+	Severity     string    `json:"severity"`      // "low" | "medium" | "high"
+	Description  string    `json:"description"`
+	DetectedAt   time.Time `json:"detected_at"`
 }
 
 // HarnessResult is the complete, deterministic output of one harness run.
@@ -40,9 +50,9 @@ type HarnessResult struct {
 
 // AlertDiff describes the difference between a baseline and a variant run.
 type AlertDiff struct {
-	BaselineAlertCount    int      `json:"baseline_alert_count"`
-	VariantAlertCount     int      `json:"variant_alert_count"`
-	EvasionDelta          int      `json:"evasion_delta"` // baseline - variant; positive = evasion
-	NewAlertRuleIDs       []RuleID `json:"new_alert_rule_ids"`
-	DroppedAlertRuleIDs   []RuleID `json:"dropped_alert_rule_ids"`
+	BaselineAlertCount  int      `json:"baseline_alert_count"`
+	VariantAlertCount   int      `json:"variant_alert_count"`
+	EvasionDelta        int      `json:"evasion_delta"` // baseline - variant; positive = evasion
+	NewAlertRuleIDs     []RuleID `json:"new_alert_rule_ids"`
+	DroppedAlertRuleIDs []RuleID `json:"dropped_alert_rule_ids"`
 }

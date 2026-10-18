@@ -225,7 +225,8 @@ func applyMutation(
 // applySplitTransaction splits one large transaction from a chosen entity into
 // N smaller ones, each just below the structuring threshold.
 // Spec keys: "entity_index" (int, default 0), "split_count" (int, default 3),
-//            "threshold_cents" (int64, default 1_000_000).
+//
+//	"threshold_cents" (int64, default 1_000_000).
 func applySplitTransaction(sel *bank.BatchSelection, spec map[string]any) (*bank.BatchSelection, error) {
 	splitCount := intFromSpec(spec, "split_count", 3)
 	thresholdCents := int64FromSpec(spec, "threshold_cents", 1_000_000)

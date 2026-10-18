@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AML Red Team">
+  <rect width="64" height="64" rx="14" fill="#1a73e8"/>
+  <path d="M32 12l14 5.2v11.4c0 9.6-6.2 16-14 17.8-7.8-1.8-14-8.2-14-17.8V17.2L32 12z"
+        fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linejoin="round"/>
+  <path d="M25 32.5l5 5 9.5-10" fill="none" stroke="#ffffff" stroke-width="3.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

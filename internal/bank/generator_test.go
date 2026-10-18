@@ -513,3 +513,57 @@ func TestErrCohortLocked_IsError(t *testing.T) {
 		t.Error("ErrCohortLocked.Error() returned empty string")
 	}
 }
+
+// ─── Cohort isolation: same seed, different cohorts must not collide ──────────
+
+// TestGenerate_SameSeedDifferentCohorts_NoIDCollision guards against a bug where
+// the UUID namespace was derived from the seed alone, so two cohorts sharing a
+// seed produced identical primary keys (and the second insert failed).
+func TestGenerate_SameSeedDifferentCohorts_NoIDCollision(t *testing.T) {
+	p1 := defaultParams()
+	p2 := defaultParams()
+	p2.CohortID = uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	// Same seed, different cohort.
+	if p1.Seed != p2.Seed {
+		t.Fatalf("test setup: seeds differ (%d vs %d)", p1.Seed, p2.Seed)
+	}
+
+	r1, err := Generate(p1)
+	if err != nil {
+		t.Fatalf("Generate(c1): %v", err)
+	}
+	r2, err := Generate(p2)
+	if err != nil {
+		t.Fatalf("Generate(c2): %v", err)
+	}
+
+	seen := make(map[uuid.UUID]bool, len(r1.Entities))
+	for _, e := range r1.Entities {
+		seen[e.ID] = true
+	}
+	for _, e := range r2.Entities {
+		if seen[e.ID] {
+			t.Errorf("entity ID %s collides across cohorts with the same seed", e.ID)
+		}
+	}
+
+	acctSeen := make(map[uuid.UUID]bool, len(r1.Accounts))
+	for _, a := range r1.Accounts {
+		acctSeen[a.ID] = true
+	}
+	for _, a := range r2.Accounts {
+		if acctSeen[a.ID] {
+			t.Errorf("account ID %s collides across cohorts with the same seed", a.ID)
+		}
+	}
+
+	txSeen := make(map[uuid.UUID]bool, len(r1.Transactions))
+	for _, tx := range r1.Transactions {
+		txSeen[tx.ID] = true
+	}
+	for _, tx := range r2.Transactions {
+		if txSeen[tx.ID] {
+			t.Errorf("transaction ID %s collides across cohorts with the same seed", tx.ID)
+		}
+	}
+}

@@ -1,0 +1,31 @@
+# Build context exclusions for the FCRT image.
+
+# VCS
+.git
+.gitignore
+
+# Go build artifacts
+*.exe
+*.out
+/bin/
+tmp/
+
+# Frontend (built & hosted separately; not part of the Go image)
+frontend/node_modules
+frontend/dist
+
+# Local env / secrets — never bake these into an image
+.env
+.env.*
+*.pem
+service-account*.json
+
+# Docs & scripts (not needed at runtime)
+docs/
+scripts/
+*.md
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

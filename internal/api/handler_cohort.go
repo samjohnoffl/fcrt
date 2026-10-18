@@ -16,16 +16,18 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
+	"github.com/yourorg/financial-crime-red-team/internal/job"
 )
 
 // CohortHandler handles cohort CRUD endpoints.
 type CohortHandler struct {
-	repo *bank.Repository
+	repo    *bank.Repository
+	jobRepo *job.Repository
 }
 
 // NewCohortHandler creates a CohortHandler.
-func NewCohortHandler(repo *bank.Repository) *CohortHandler {
-	return &CohortHandler{repo: repo}
+func NewCohortHandler(repo *bank.Repository, jobRepo *job.Repository) *CohortHandler {
+	return &CohortHandler{repo: repo, jobRepo: jobRepo}
 }
 
 // ─── GET /api/v1/cohorts ─────────────────────────────────────────────────────
@@ -47,10 +49,10 @@ func (h *CohortHandler) ListCohorts(w http.ResponseWriter, r *http.Request) {
 // ─── POST /api/v1/cohorts ────────────────────────────────────────────────────
 
 type createCohortRequest struct {
-	Name        string         `json:"name"`
-	Seed        int64          `json:"seed"`
-	Predicate   bank.Predicate `json:"predicate"`
-	WindowDays  int            `json:"window_days"` // defaults to 90
+	Name       string         `json:"name"`
+	Seed       int64          `json:"seed"`
+	Predicate  bank.Predicate `json:"predicate"`
+	WindowDays int            `json:"window_days"` // defaults to 90
 }
 
 // CreateCohort inserts a new cohort and enqueues a generation job.
@@ -93,6 +95,21 @@ func (h *CohortHandler) CreateCohort(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db_error", "Failed to create cohort")
 		return
 	}
+
+	// Enqueue deterministic data generation (DECISION-004). The worker claims
+	// the job, generates the synthetic cohort, persists it, and locks it.
+	if h.jobRepo != nil {
+		if _, err := h.jobRepo.Enqueue(r.Context(), job.TypeGenerateCohort, job.GenerateCohortPayload{
+			CohortID:   created.ID,
+			Seed:       created.Seed,
+			WindowDays: days,
+		}); err != nil {
+			slog.Error("enqueue cohort generation", "cohort_id", created.ID, "err", err)
+			w.Header().Set("X-FCRT-Warning",
+				"cohort created but generation job could not be enqueued")
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, created)
 }
 

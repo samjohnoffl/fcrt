@@ -37,10 +37,13 @@ const (
 type Status string
 
 const (
-	StatusPending   Status = "pending"
-	StatusRunning   Status = "running"
-	StatusCompleted Status = "completed"
-	StatusFailed    Status = "failed"
+	StatusPending      Status = "pending"
+	StatusQueued       Status = "queued"
+	StatusRunning      Status = "running"
+	StatusCompleted    Status = "completed"
+	StatusFailed       Status = "failed"
+	StatusCancelled    Status = "cancelled"
+	StatusInconclusive Status = "inconclusive"
 )
 
 // ─── Input context ────────────────────────────────────────────────────────────
@@ -50,11 +53,11 @@ const (
 // ManifestHash is computed from the CohortManifest JSON; it will change
 // if the manifest changes (e.g. a re-generation), making the pair incomparable.
 type InputContext struct {
-	CohortID     uuid.UUID          `json:"cohort_id"`
-	ManifestHash string             `json:"manifest_hash"`
+	CohortID     uuid.UUID           `json:"cohort_id"`
+	ManifestHash string              `json:"manifest_hash"`
 	Manifest     bank.CohortManifest `json:"manifest"`
-	WindowStart  time.Time          `json:"window_start"`
-	WindowEnd    time.Time          `json:"window_end"`
+	WindowStart  time.Time           `json:"window_start"`
+	WindowEnd    time.Time           `json:"window_end"`
 }
 
 // NewInputContext constructs an InputContext and computes the ManifestHash.
@@ -130,16 +133,16 @@ func (ps *PairSpec) Validate() error {
 
 // RunResult is the output of one run (baseline or variant) of the evaluator.
 type RunResult struct {
-	ID           uuid.UUID
-	PairID       uuid.UUID
-	RunType      RunType
-	ControlHash  string
-	ManifestHash string
-	AlertCount   int
-	AlertSummary map[aml.RuleID]int
-	RawAlerts    []aml.Alert
-	StartedAt    time.Time
-	CompletedAt  time.Time
+	ID           uuid.UUID          `json:"id"`
+	PairID       uuid.UUID          `json:"pair_id"`
+	RunType      RunType            `json:"run_type"`
+	ControlHash  string             `json:"control_hash"`
+	ManifestHash string             `json:"manifest_hash"`
+	AlertCount   int                `json:"alert_count"`
+	AlertSummary map[aml.RuleID]int `json:"alert_summary"`
+	RawAlerts    []aml.Alert        `json:"raw_alerts,omitempty"`
+	StartedAt    time.Time          `json:"started_at"`
+	CompletedAt  time.Time          `json:"completed_at"`
 }
 
 // RunType distinguishes a baseline from a variant run.
@@ -155,15 +158,15 @@ const (
 // Outcome is the diff between the baseline and variant runs.
 // It is computed by ComparePair and persisted in experiment_outcome.
 type Outcome struct {
-	ID                   uuid.UUID
-	PairID               uuid.UUID
-	BaselineRunID        uuid.UUID
-	VariantRunID         uuid.UUID
-	EvasionDelta         int         // baseline_alerts - variant_alerts; positive = evasion
-	NewAlertRuleIDs      []aml.RuleID // in variant but not baseline
-	DroppedAlertRuleIDs  []aml.RuleID // in baseline but not variant
-	OutcomeUnchanged     bool        // true if diff is empty
-	CreatedAt            time.Time
+	ID                  uuid.UUID    `json:"id"`
+	PairID              uuid.UUID    `json:"pair_id"`
+	BaselineRunID       uuid.UUID    `json:"baseline_run_id"`
+	VariantRunID        uuid.UUID    `json:"variant_run_id"`
+	EvasionDelta        int          `json:"evasion_delta"`          // baseline_alerts - variant_alerts; positive = evasion
+	NewAlertRuleIDs     []aml.RuleID `json:"new_alert_rule_ids"`     // in variant but not baseline
+	DroppedAlertRuleIDs []aml.RuleID `json:"dropped_alert_rule_ids"` // in baseline but not variant
+	OutcomeUnchanged    bool         `json:"outcome_unchanged"`      // true if diff is empty
+	CreatedAt           time.Time    `json:"created_at"`
 }
 
 // ─── Pair record ─────────────────────────────────────────────────────────────

@@ -212,6 +212,141 @@ func (r *Repository) ListRunsForPair(ctx context.Context, pairID uuid.UUID) ([]R
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// PairSummary is a pair together with its outcome (nil until the pair
+// completes). Used by the list and overview endpoints.
+type PairSummary struct {
+	Pair    Pair
+	Outcome *Outcome
+}
+
+// ListPairSummaries returns up to limit pairs (newest first) with their
+// outcomes joined via LEFT JOIN, so in-flight pairs are included too.
+func (r *Repository) ListPairSummaries(ctx context.Context, limit int) ([]PairSummary, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id, p.name, p.cohort_id, p.control_hash, p.manifest_hash, p.seed,
+		       p.declared_change, p.mutation_type, p.mutation_spec, p.status, p.error_msg,
+		       p.created_at, p.updated_at,
+		       o.id, o.pair_id, o.baseline_run_id, o.variant_run_id, o.evasion_delta,
+		       o.new_alert_rule_ids, o.dropped_alert_rule_ids, o.outcome_unchanged, o.created_at
+		FROM experiment_pair p
+		LEFT JOIN experiment_outcome o ON o.pair_id = p.id
+		ORDER BY p.created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list pair summaries: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PairSummary
+	for rows.Next() {
+		var s PairSummary
+		var specJSON []byte
+		var errMsg *string
+		var (
+			oID, oPairID, oBaseline, oVariant *uuid.UUID
+			oDelta                            *int
+			oNew, oDropped                    []string
+			oUnchanged                        *bool
+			oCreated                          *time.Time
+		)
+		if err := rows.Scan(
+			&s.Pair.ID, &s.Pair.Name, &s.Pair.CohortID, &s.Pair.ControlHash,
+			&s.Pair.ManifestHash, &s.Pair.Seed, &s.Pair.DeclaredChange,
+			&s.Pair.MutationType, &specJSON, &s.Pair.Status, &errMsg,
+			&s.Pair.CreatedAt, &s.Pair.UpdatedAt,
+			&oID, &oPairID, &oBaseline, &oVariant, &oDelta,
+			&oNew, &oDropped, &oUnchanged, &oCreated,
+		); err != nil {
+			return nil, fmt.Errorf("scan pair summary: %w", err)
+		}
+		if errMsg != nil {
+			s.Pair.ErrorMsg = *errMsg
+		}
+		if err := json.Unmarshal(specJSON, &s.Pair.MutationSpec); err != nil {
+			return nil, fmt.Errorf("unmarshal mutation_spec: %w", err)
+		}
+		if oID != nil {
+			s.Outcome = &Outcome{
+				ID:                  *oID,
+				PairID:              *oPairID,
+				BaselineRunID:       *oBaseline,
+				VariantRunID:        *oVariant,
+				EvasionDelta:        *oDelta,
+				NewAlertRuleIDs:     stringsToRuleIDs(oNew),
+				DroppedAlertRuleIDs: stringsToRuleIDs(oDropped),
+				OutcomeUnchanged:    *oUnchanged,
+				CreatedAt:           *oCreated,
+			}
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// CompletedPair bundles a pair with its computed outcome for regression packing.
+type CompletedPair struct {
+	Pair    Pair
+	Outcome Outcome
+}
+
+// ListCompletedPairsWithOutcomes returns all completed pairs joined with their
+// outcomes, ordered by creation time (oldest first). Pairs without an outcome
+// row are skipped. It is used to build a Regression Test Pack.
+func (r *Repository) ListCompletedPairsWithOutcomes(ctx context.Context, limit int) ([]CompletedPair, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id, p.name, p.cohort_id, p.control_hash, p.manifest_hash, p.seed,
+		       p.declared_change, p.mutation_type, p.mutation_spec, p.status, p.error_msg,
+		       p.created_at, p.updated_at,
+		       o.id, o.pair_id, o.baseline_run_id, o.variant_run_id,
+		       o.evasion_delta, o.new_alert_rule_ids, o.dropped_alert_rule_ids,
+		       o.outcome_unchanged, o.created_at
+		FROM experiment_pair p
+		JOIN experiment_outcome o ON o.pair_id = p.id
+		WHERE p.status = 'completed'
+		ORDER BY p.created_at ASC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list completed pairs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CompletedPair
+	for rows.Next() {
+		var cp CompletedPair
+		var specJSON []byte
+		var errMsg *string
+		var newRuleStrs, droppedRuleStrs []string
+
+		if err := rows.Scan(
+			&cp.Pair.ID, &cp.Pair.Name, &cp.Pair.CohortID, &cp.Pair.ControlHash,
+			&cp.Pair.ManifestHash, &cp.Pair.Seed, &cp.Pair.DeclaredChange,
+			&cp.Pair.MutationType, &specJSON, &cp.Pair.Status, &errMsg,
+			&cp.Pair.CreatedAt, &cp.Pair.UpdatedAt,
+			&cp.Outcome.ID, &cp.Outcome.PairID, &cp.Outcome.BaselineRunID,
+			&cp.Outcome.VariantRunID, &cp.Outcome.EvasionDelta, &newRuleStrs,
+			&droppedRuleStrs, &cp.Outcome.OutcomeUnchanged, &cp.Outcome.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan completed pair: %w", err)
+		}
+		if errMsg != nil {
+			cp.Pair.ErrorMsg = *errMsg
+		}
+		if err := json.Unmarshal(specJSON, &cp.Pair.MutationSpec); err != nil {
+			return nil, fmt.Errorf("unmarshal mutation_spec: %w", err)
+		}
+		cp.Outcome.NewAlertRuleIDs = stringsToRuleIDs(newRuleStrs)
+		cp.Outcome.DroppedAlertRuleIDs = stringsToRuleIDs(droppedRuleStrs)
+		out = append(out, cp)
+	}
+	return out, rows.Err()
+}
+
 func ruleIDsToStrings(ids []aml.RuleID) []string {
 	s := make([]string, len(ids))
 	for i, id := range ids {

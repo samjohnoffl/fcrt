@@ -1,0 +1,88 @@
+# FCRT local development stack.
+#
+#   docker compose up --build        # postgres + migrate + api + worker
+#   docker compose run --rm migrate  # re-run migrations only
+#   docker compose down -v           # tear down and delete the DB volume
+#
+# The API is exposed on http://localhost:8080 and runs with auth DISABLED
+# (FIREBASE_PROJECT empty) — this is for local dev only.
+
+name: fcrt
+
+services:
+  # ── PostgreSQL 16 ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fcrt
+      POSTGRES_PASSWORD: fcrt
+      POSTGRES_DB: fincrime_redteam
+    ports:
+      # Host port is overridable to avoid clashing with a local Postgres:
+      #   FCRT_PG_PORT=5433 docker compose up
+      - "${FCRT_PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fcrt -d fincrime_redteam"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Schema migrations (golang-migrate, via the app image's /migrate) ────────
+  # Runs the same binary/path as the Cloud Run migration job, so local dev and
+  # deployment exercise identical migration code.
+  migrate:
+    build: .
+    entrypoint: ["/migrate"]
+    command: ["up"]
+    volumes:
+      # Mount host migrations for fast local iteration; the image also bakes
+      # /migrations for production (see Dockerfile).
+      - ./migrations:/migrations:ro
+    environment:
+      DATABASE_URL: postgres://fcrt:fcrt@postgres:5432/fincrime_redteam?sslmode=disable
+      MIGRATIONS_DIR: /migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── API server ─────────────────────────────────────────────────────────────
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://fcrt:fcrt@postgres:5432/fincrime_redteam?sslmode=disable
+      # Username/password auth with test credentials (local dev only).
+      AUTH_MODE: local
+      AUTH_USERS: "admin:admin:admin,analyst:analyst:analyst"
+      AUTH_SESSION_SECRET: local-dev-session-secret-change-me
+      AUTH_SESSION_TTL_HOURS: "12"
+      # Gemini AI scenario generation (from the host environment / .env).
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-}"
+      API_PORT: "8080"
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:5199"
+      LOG_LEVEL: info
+    ports:
+      # Host port is overridable to avoid clashing with a local service:
+      #   FCRT_API_PORT=8081 docker compose up
+      - "${FCRT_API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # ── Background worker (job polling) ────────────────────────────────────────
+  worker:
+    build: .
+    entrypoint: ["/fcrt-worker"]
+    environment:
+      DATABASE_URL: postgres://fcrt:fcrt@postgres:5432/fincrime_redteam?sslmode=disable
+      WORKER_POLL_INTERVAL_SECONDS: "5"
+      WORKER_MAX_JOB_ATTEMPTS: "5"
+      LOG_LEVEL: info
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

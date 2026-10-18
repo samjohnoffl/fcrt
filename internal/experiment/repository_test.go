@@ -4,8 +4,9 @@
 // Require a real PostgreSQL database with all migrations applied.
 //
 // Skip with: go test -short ./internal/experiment/
-// Run with:  DATABASE_TEST_URL="host=/var/run/postgresql dbname=fincrime_test sslmode=disable" \
-//              go test -v -timeout 120s ./internal/experiment/
+//
+//	Run with:  DATABASE_TEST_URL="host=/var/run/postgresql dbname=fincrime_test sslmode=disable" \
+//	             go test -v -timeout 120s ./internal/experiment/
 package experiment
 
 import (

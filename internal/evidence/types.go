@@ -26,27 +26,27 @@ type GeminiTrace struct {
 
 // CohortSnapshot is a point-in-time copy of the cohort that was used.
 type CohortSnapshot struct {
-	CohortID    uuid.UUID          `json:"cohort_id"`
-	Seed        int64              `json:"seed"`
-	Predicate   bank.Predicate     `json:"predicate"`
-	EntityCount int                `json:"entity_count"`
-	TxCount     int                `json:"tx_count"`
-	LockedAt    time.Time          `json:"locked_at"`
+	CohortID    uuid.UUID      `json:"cohort_id"`
+	Seed        int64          `json:"seed"`
+	Predicate   bank.Predicate `json:"predicate"`
+	EntityCount int            `json:"entity_count"`
+	TxCount     int            `json:"tx_count"`
+	LockedAt    time.Time      `json:"locked_at"`
 }
 
 // Bundle is the complete, self-contained evidence artifact for one experiment.
 // It is stored as JSONB in `evidence_bundle.bundle` and can be exported to JSON.
 type Bundle struct {
-	RunID           uuid.UUID              `json:"run_id"`          // = experiment.id
-	AMLRuleVersion  string                 `json:"aml_rule_version"`
-	CohortSnapshot  CohortSnapshot         `json:"cohort_snapshot"`
-	ScenarioParams  *scenario.Proposal     `json:"scenario_params,omitempty"`
-	BaselineAlerts  []aml.Alert            `json:"baseline_alerts"`
-	VariantAlerts   []aml.Alert            `json:"variant_alerts"`
-	AMLDiff         aml.AlertDiff          `json:"aml_diff"`
-	CoverageDelta   []coverage.RuleCoverage `json:"coverage_delta"` // rules whose counts changed
-	GeminiTrace     *GeminiTrace           `json:"gemini_trace,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
+	RunID          uuid.UUID               `json:"run_id"` // = experiment.id
+	AMLRuleVersion string                  `json:"aml_rule_version"`
+	CohortSnapshot CohortSnapshot          `json:"cohort_snapshot"`
+	ScenarioParams *scenario.Proposal      `json:"scenario_params"`
+	BaselineAlerts []aml.Alert             `json:"baseline_alerts"`
+	VariantAlerts  []aml.Alert             `json:"variant_alerts"`
+	AMLDiff        aml.AlertDiff           `json:"aml_diff"`
+	CoverageDelta  []coverage.RuleCoverage `json:"coverage_delta"` // rules whose counts changed
+	GeminiTrace    *GeminiTrace            `json:"gemini_trace"`
+	CreatedAt      time.Time               `json:"created_at"`
 	// Checksum is SHA-256 of the JSON encoding of Bundle with Checksum="" (canonical form).
-	Checksum        string                 `json:"checksum"`
+	Checksum string `json:"checksum"`
 }
