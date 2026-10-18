@@ -16,6 +16,7 @@ import (
 	"github.com/yourorg/financial-crime-red-team/internal/audit"
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
 	"github.com/yourorg/financial-crime-red-team/internal/coverage"
+	"github.com/yourorg/financial-crime-red-team/internal/discovery"
 	"github.com/yourorg/financial-crime-red-team/internal/evidence"
 	"github.com/yourorg/financial-crime-red-team/internal/experiment"
 	"github.com/yourorg/financial-crime-red-team/internal/job"
@@ -35,6 +36,7 @@ type RouterConfig struct {
 	AuditRepo      *audit.Repository
 	JobRepo        *job.Repository
 	EvidenceRepo   *evidence.Repository
+	DiscoveryRepo  *discovery.Repository
 	Provider       scenario.GeminiProvider // nil = Vertex AI not configured
 	CORSOrigins    []string
 }
@@ -58,6 +60,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	scenarioH := NewScenarioHandler(cfg.ScenarioRepo, cfg.BankRepo, cfg.AuditRepo, cfg.Provider)
 	experimentH := NewExperimentHandler(cfg.ExperimentRepo, cfg.BankRepo, cfg.ScenarioRepo, cfg.CoverageRepo, cfg.EvidenceRepo)
 	coverageH := NewCoverageHandler(cfg.CoverageRepo)
+	discoveryH := NewDiscoveryHandler(cfg.DiscoveryRepo, cfg.BankRepo)
 	auditH := NewAuditHandler(cfg.AuditRepo)
 	campaignH := NewCampaignHandler(cfg.ExperimentRepo, cfg.CoverageRepo)
 	regressionH := NewRegressionHandler(cfg.ExperimentRepo, cfg.BankRepo)
@@ -103,6 +106,12 @@ func NewRouter(cfg RouterConfig) http.Handler {
 
 			// Coverage (AC-05).
 			r.Get("/coverage", coverageH.GetCoverage)
+
+			// Adaptive discovery: choose the next candidate with a persisted,
+			// explainable score. See docs/DECISIONS.md (DECISION-016).
+			r.Post("/cohorts/{id}/discovery", discoveryH.Run)
+			r.Get("/cohorts/{id}/discovery", discoveryH.Latest)
+			r.Get("/cohorts/{id}/benchmark", discoveryH.Benchmark)
 
 			// Campaigns.
 			r.Get("/campaigns", campaignH.ListCampaigns)

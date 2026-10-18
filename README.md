@@ -370,6 +370,30 @@ Violations return `403 insufficient_role`; missing/invalid tokens return
 | GET | `/api/v1/cohorts/{id}` | Get cohort detail |
 | GET | `/api/v1/cohorts/{id}/summary` | Get cohort statistics |
 | POST | `/api/v1/cohorts/{id}/lock` | Lock cohort (immutable after this) |
+| POST | `/api/v1/cohorts/{id}/discovery` | Select the next candidates with a persisted, explainable score (`{strategy?,budget?,seed?}`) |
+| GET | `/api/v1/cohorts/{id}/discovery` | Latest stored run per strategy, including every candidate's scoring trace |
+| GET | `/api/v1/cohorts/{id}/benchmark` | Compare stored Random / Gemini-only / Adaptive runs; returns `insufficient_data` instead of inventing a winner |
+
+### Adaptive discovery (the core loop)
+
+`POST /cohorts/{id}/discovery` scores every eligible proposal for the cohort and
+persists the decision. The score is
+
+```
+S(x) = 0.30·C + 0.25·N + 0.25·I + 0.20·V     (weights v1.0.0)
+```
+
+`C` is expected coverage gain (inverse repetition), `N` is genome novelty
+(minimum distance to already-tested genomes), `I` is a documented information
+proxy (`1 − unchanged-outcome share`), and `V` is schema validity. Each stored
+candidate carries its nine-dimension genome, all four components, the total and
+a human-readable rationale, so the selection can be audited without re-running
+Gemini.
+
+Run all three strategies (`adaptive`, `random`, `gemini_only`) with the same
+budget, then call `GET /cohorts/{id}/benchmark`. The benchmark refuses to name a
+winner when a strategy is missing, when any run selected fewer than 5
+candidates, or when the metrics tie.
 
 ### Scenarios
 | Method | Path | Description |
@@ -394,14 +418,13 @@ Violations return `403 insufficient_role`; missing/invalid tokens return
 |---|---|---|
 | GET | `/api/v1/coverage` | Rule coverage summary (sorted by weight) |
 
-### Campaigns
+### Campaigns (grouping is not persisted yet)
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/v1/campaigns` | List campaigns |
-| POST | `/api/v1/campaigns` | Create campaign |
-| GET | `/api/v1/campaigns/{id}` | Get campaign |
-| GET | `/api/v1/campaigns/{id}/coverage` | Campaign coverage |
-| GET | `/api/v1/campaigns/{id}/benchmark` | Run strategy comparison |
+| GET | `/api/v1/campaigns` | List campaigns (always empty — no table yet) |
+| POST | `/api/v1/campaigns` | Echo a campaign object (not stored) |
+| GET | `/api/v1/campaigns/{id}/coverage` | Placeholder |
+| GET | `/api/v1/campaigns/{id}/benchmark` | `404 campaign_not_persisted` — use `/cohorts/{id}/benchmark` |
 
 ### Regression Test Pack (PRODUCT_SPEC item 7)
 | Method | Path | Description |

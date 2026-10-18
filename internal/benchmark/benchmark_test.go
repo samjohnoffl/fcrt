@@ -1,79 +1,75 @@
 package benchmark
 
 import (
-	"context"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/yourorg/financial-crime-red-team/internal/discovery"
+	"github.com/yourorg/financial-crime-red-team/internal/genome"
+	"github.com/yourorg/financial-crime-red-team/internal/scenario"
 )
 
-func TestRunRandom(t *testing.T) {
-	res, err := Run(context.Background(), BenchmarkConfig{
-		Strategy:      StrategyRandom,
-		NumCandidates: 100,
-		Seed:          42,
-	})
-	if err != nil {
-		t.Fatalf("Run(random) error: %v", err)
-	}
-	if res.Strategy != StrategyRandom {
-		t.Errorf("strategy = %s, want random", res.Strategy)
-	}
-	if res.TotalCandidates != 100 {
-		t.Errorf("total = %d, want 100", res.TotalCandidates)
-	}
-	if res.ValidCandidates+res.ApprovedCandidates+res.RejectedCandidates != 100 {
-		t.Errorf("candidate buckets do not sum to total")
+func run(strategy discovery.Strategy, coverage, novelty, info, score float64) discovery.Run {
+	g := genome.Encode(scenario.Proposal{ScenarioType: "split_transaction", Description: "individual"})
+	return discovery.Run{
+		ID:            uuid.New(),
+		Strategy:      strategy,
+		Weights:       discovery.DefaultWeights(),
+		Budget:        2,
+		PoolSize:      4,
+		ValidPoolSize: 3,
+		Candidates: []discovery.Scored{
+			{ProposalID: uuid.New(), Genome: g, GenomeValid: true, Score: score,
+				Components: discovery.Components{Coverage: coverage, Novelty: novelty, Information: info, Validity: 1}},
+			{ProposalID: uuid.New(), Genome: g, GenomeValid: true, Score: score,
+				Components: discovery.Components{Coverage: coverage, Novelty: novelty, Information: info, Validity: 1}},
+		},
 	}
 }
 
-func TestRunUnknownStrategy(t *testing.T) {
-	_, err := Run(context.Background(), BenchmarkConfig{
-		Strategy:      "nonsense",
-		NumCandidates: 10,
-	})
-	if err == nil {
-		t.Fatal("expected error for unknown strategy")
+func TestSummarizeUsesStoredValues(t *testing.T) {
+	s := summarize(run(discovery.StrategyAdaptive, 0.8, 0.6, 0.4, 0.7), 1)
+
+	if s.Selected != 2 || s.PoolSize != 4 || s.ValidPool != 3 {
+		t.Fatalf("counts not derived from run: %+v", s)
+	}
+	if s.ValidYield != 0.75 {
+		t.Errorf("valid yield = %v, want 0.75", s.ValidYield)
+	}
+	if s.ApprovedRate != 0.5 {
+		t.Errorf("approved rate = %v, want 0.5", s.ApprovedRate)
+	}
+	if s.CoverageGain != 0.8 || s.Novelty != 0.6 || s.Information != 0.4 || s.AverageScore != 0.7 {
+		t.Errorf("component means wrong: %+v", s)
 	}
 }
 
-func TestRunComparison(t *testing.T) {
-	cmp, err := RunComparison(context.Background(), BenchmarkConfig{
-		NumCandidates: 120,
-		Seed:          7,
-	})
-	if err != nil {
-		t.Fatalf("RunComparison error: %v", err)
-	}
-	if len(cmp.Strategies) != 3 {
-		t.Fatalf("strategies = %d, want 3", len(cmp.Strategies))
-	}
-	if cmp.Winner == "" {
-		t.Error("winner not set")
-	}
-	// Adaptive should win by coverage gain in our model.
-	if cmp.Winner != StrategyAdaptive {
-		t.Errorf("winner = %s, want adaptive", cmp.Winner)
-	}
-	for _, s := range cmp.Strategies {
-		if s.ValidCandidateYield < 0 || s.ValidCandidateYield > 1 {
-			t.Errorf("%s valid yield out of range: %f", s.Name, s.ValidCandidateYield)
-		}
-		if s.CoverageGain < 0 {
-			t.Errorf("%s coverage gain negative", s.Name)
-		}
+func TestSummarizeHandlesEmptyRun(t *testing.T) {
+	s := summarize(discovery.Run{Strategy: discovery.StrategyRandom}, 0)
+	if s.ValidYield != 0 || s.ApprovedRate != 0 || s.CoverageGain != 0 {
+		t.Fatalf("empty run produced non-zero metrics: %+v", s)
 	}
 }
 
-func TestComparisonDeterministic(t *testing.T) {
-	cfg := BenchmarkConfig{NumCandidates: 60, Seed: 99}
-	a, err := RunComparison(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
+func TestPickWinnerUsesCoverageThenApproval(t *testing.T) {
+	low := StrategySummary{Strategy: discovery.StrategyRandom, CoverageGain: 0.2}
+	high := StrategySummary{Strategy: discovery.StrategyAdaptive, CoverageGain: 0.9}
+	if got, ok := pickWinner([]StrategySummary{low, high}); !ok || got != discovery.StrategyAdaptive {
+		t.Fatalf("winner = %s (ok=%v), want adaptive", got, ok)
 	}
-	b, err := RunComparison(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
+
+	tieA := StrategySummary{Strategy: discovery.StrategyGeminiOnly, CoverageGain: 0.5, ApprovedRate: 0.1}
+	tieB := StrategySummary{Strategy: discovery.StrategyAdaptive, CoverageGain: 0.5, ApprovedRate: 0.4}
+	if got, ok := pickWinner([]StrategySummary{tieA, tieB}); !ok || got != discovery.StrategyAdaptive {
+		t.Fatalf("tie-break winner = %s (ok=%v), want adaptive", got, ok)
 	}
-	if a.Winner != b.Winner || len(a.Strategies) != len(b.Strategies) {
-		t.Error("comparison not deterministic")
+}
+
+func TestPickWinnerDeclinesOnExactTie(t *testing.T) {
+	a := StrategySummary{Strategy: discovery.StrategyRandom, CoverageGain: 0.5, ApprovedRate: 0.5, AverageScore: 0.5}
+	b := StrategySummary{Strategy: discovery.StrategyAdaptive, CoverageGain: 0.5, ApprovedRate: 0.5, AverageScore: 0.5}
+	if got, ok := pickWinner([]StrategySummary{a, b}); ok || got != "" {
+		t.Fatalf("exact tie declared a winner: %q ok=%v", got, ok)
 	}
 }

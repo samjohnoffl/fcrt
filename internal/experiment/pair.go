@@ -105,18 +105,19 @@ func Execute(spec PairSpec, sel *bank.BatchSelection, startedAt time.Time) (*Exe
 
 	// ── Pair record ───────────────────────────────────────────────────────────
 	pair := Pair{
-		ID:             pairID,
-		Name:           spec.Name,
-		CohortID:       spec.Input.CohortID,
-		ControlHash:    configHash,
-		ManifestHash:   manifestHash,
-		Seed:           spec.Input.Manifest.Seed,
-		DeclaredChange: spec.DeclaredChange,
-		MutationType:   spec.MutationType,
-		MutationSpec:   spec.MutationSpec,
-		Status:         StatusCompleted,
-		CreatedAt:      startedAt,
-		UpdatedAt:      startedAt,
+		ID:                 pairID,
+		Name:               spec.Name,
+		CohortID:           spec.Input.CohortID,
+		ControlHash:        configHash,
+		ManifestHash:       manifestHash,
+		Seed:               spec.Input.Manifest.Seed,
+		DeclaredChange:     spec.DeclaredChange,
+		MutationType:       spec.MutationType,
+		MutationSpec:       spec.MutationSpec,
+		ScenarioProposalID: spec.ScenarioProposalID,
+		Status:             StatusCompleted,
+		CreatedAt:          startedAt,
+		UpdatedAt:          startedAt,
 	}
 
 	return &ExecuteResult{

@@ -3,7 +3,7 @@ import type {
   Cohort, CreateCohortRequest, CoverageSummary,
   EvidenceBundle, ExperimentDetailResponse, ExperimentPair,
   CreateExperimentRequest, ScenarioProposal,
-  Campaign, CreateCampaignRequest, BenchmarkResponse,
+  Campaign, CreateCampaignRequest, ComparisonResult, DiscoveryRun, BenchmarkStrategy,
   RegressionVerifyResponse, LoginResponse, Principal,
   AppUser, CreateUserRequest, UpdateUserRequest, AuditEvent,
 } from './types'
@@ -67,15 +67,29 @@ export const coverageApi = {
   get: () => api.get<CoverageSummary>('/coverage'),
 }
 
-/* ── Campaigns ── */
-export const campaignApi = {
-  list:      ()                       => api.get<Campaign[]>('/campaigns'),
-  get:       (id: string)             => api.get<Campaign>(`/campaigns/${id}`),
-  create:    (r: CreateCampaignRequest) => api.post<Campaign>('/campaigns', r),
-  benchmark: (id: string, candidates?: number) =>
-    api.get<BenchmarkResponse>(
-      `/campaigns/${id}/benchmark${candidates ? `?candidates=${candidates}` : ''}`,
+/* ── Adaptive discovery & benchmark (cohort-scoped) ── */
+export const discoveryApi = {
+  /** Run one selection strategy and persist its scoring trace. */
+  run: (
+    cohortId: string,
+    body: { strategy: BenchmarkStrategy; budget?: number; seed?: number },
+  ) => api.post<DiscoveryRun>(`/cohorts/${cohortId}/discovery`, body),
+
+  /** Latest stored run for each strategy. */
+  latest: (cohortId: string) =>
+    api.get<{ cohort_id: string; runs: Record<string, DiscoveryRun>; note: string }>(
+      `/cohorts/${cohortId}/discovery`,
     ),
+
+  /** Compare the stored runs. Returns insufficient_data until all three exist. */
+  benchmark: (cohortId: string) =>
+    api.get<ComparisonResult>(`/cohorts/${cohortId}/benchmark`),
+}
+
+/* ── Campaigns (grouping is not persisted yet) ── */
+export const campaignApi = {
+  list:   ()                          => api.get<Campaign[]>('/campaigns'),
+  create: (r: CreateCampaignRequest)  => api.post<Campaign>('/campaigns', r),
 }
 
 /* ── Regression Test Pack (PRODUCT_SPEC item 7) ── */

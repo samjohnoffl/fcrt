@@ -8,14 +8,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/yourorg/financial-crime-red-team/internal/aml"
-	"github.com/yourorg/financial-crime-red-team/internal/benchmark"
 	"github.com/yourorg/financial-crime-red-team/internal/coverage"
 	"github.com/yourorg/financial-crime-red-team/internal/experiment"
 )
@@ -161,41 +159,16 @@ func (h *CampaignHandler) GetCampaignCoverage(w http.ResponseWriter, r *http.Req
 
 // ─── GET /api/v1/campaigns/{id}/benchmark ──────────────────────────────────────
 
+// GetCampaignBenchmark is retained as an explicit, honest failure.
+//
+// Campaigns are not persisted (see handler_campaign.go CreateCampaign), so a
+// campaign ID cannot be resolved to a cohort or to stored runs. Returning a
+// made-up comparison here was the old behaviour and is deliberately removed.
+// Use GET /api/v1/cohorts/{id}/benchmark instead.
 func (h *CampaignHandler) GetCampaignBenchmark(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseUUID(w, chi.URLParam(r, "id"))
-	if !ok {
+	if _, ok := parseUUID(w, chi.URLParam(r, "id")); !ok {
 		return
 	}
-
-	// Optional ?candidates=N query param (default 100).
-	numCandidates := 100
-	if v := r.URL.Query().Get("candidates"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 10000 {
-			numCandidates = n
-		}
-	}
-
-	// Derive a deterministic seed from the campaign ID for reproducibility.
-	var seed int64
-	for _, b := range id {
-		seed = seed*31 + int64(b)
-	}
-
-	cfg := benchmark.BenchmarkConfig{
-		NumCandidates:  numCandidates,
-		Seed:           seed,
-		CoverageRepo:   h.coverageRepo,
-		ExperimentRepo: h.expRepo,
-	}
-	comparison, err := benchmark.RunComparison(r.Context(), cfg)
-	if err != nil {
-		slog.Error("benchmark comparison failed", "campaign_id", id, "error", err)
-		writeError(w, http.StatusInternalServerError, "benchmark_failed", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"campaign_id": id,
-		"benchmark":   comparison,
-	})
+	writeError(w, http.StatusNotFound, "campaign_not_persisted",
+		"Campaigns are not persisted; use GET /api/v1/cohorts/{id}/benchmark with a real cohort ID")
 }

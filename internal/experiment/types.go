@@ -95,6 +95,10 @@ type PairSpec struct {
 	// MutationSpec holds the full mutation parameters (flexible JSON blob).
 	// any is acceptable here: this is an open-schema config blob for mutations.
 	MutationSpec map[string]any
+	// ScenarioProposalID links the pair to the approved proposal it came from.
+	// Nil for manually authored experiments. The adaptive loop uses this link
+	// to avoid proposing behaviour that has already been tested.
+	ScenarioProposalID *uuid.UUID
 }
 
 // Validate returns an error if the spec is incomplete or contradictory.
@@ -182,10 +186,12 @@ type Pair struct {
 	DeclaredChange string         `json:"declared_change"`
 	MutationType   MutationType   `json:"mutation_type"`
 	MutationSpec   map[string]any `json:"mutation_spec"` // any: open-schema blob per AGENTS.md rule
-	Status         Status         `json:"status"`
-	ErrorMsg       string         `json:"error_msg,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	// ScenarioProposalID is the proposal this pair was executed from, if any.
+	ScenarioProposalID *uuid.UUID `json:"scenario_proposal_id,omitempty"`
+	Status             Status     `json:"status"`
+	ErrorMsg           string     `json:"error_msg,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 // ─── Sentinel errors ──────────────────────────────────────────────────────────

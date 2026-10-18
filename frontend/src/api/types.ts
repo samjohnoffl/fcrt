@@ -208,30 +208,100 @@ export interface CreateCampaignRequest {
   budget: number
 }
 
-/* ── Benchmark ── */
+/* ── Adaptive discovery & benchmark ── */
 export type BenchmarkStrategy = 'random' | 'gemini_only' | 'adaptive'
 
+export interface GenomeDimensions {
+  actors: string
+  accounts: string
+  transactions: string
+  transaction_count: number
+  temporal: string
+  network: string
+  counterparty_count: number
+  ownership: string
+  geography: string
+  behavioral_change: string
+  control_context: string
+}
+
+export interface Genome {
+  genome_id: string
+  schema_version: string
+  reference_typology_id?: string
+  dimensions: GenomeDimensions
+  constraints?: string[]
+  synthetic_only: boolean
+}
+
+export interface ScoreComponents {
+  coverage: number
+  novelty: number
+  information: number
+  validity: number
+}
+
+export interface ScoredCandidate {
+  proposal_id: string
+  mutation_type: string
+  genome: Genome
+  genome_valid: boolean
+  components: ScoreComponents
+  score: number
+  rank: number
+  selected: boolean
+  rationale: string
+}
+
+export interface DiscoveryRun {
+  id: string
+  cohort_id: string
+  strategy: BenchmarkStrategy
+  weights: {
+    version: string
+    coverage: number
+    novelty: number
+    information: number
+    validity: number
+  }
+  seed: number
+  budget: number
+  pool_size: number
+  valid_pool_size: number
+  candidates: ScoredCandidate[]
+  rejected?: { proposal_id: string; reason: string }[]
+  notes?: string
+  duration_ms: number
+  created_at: string
+}
+
 export interface StrategySummary {
-  name: BenchmarkStrategy
+  strategy: BenchmarkStrategy
+  run_id: string
+  weights_version: string
+  seed: number
+  budget: number
+  pool_size: number
+  valid_pool_size: number
+  selected_candidates: number
+  approved_candidates: number
   valid_candidate_yield: number
   approved_rate: number
-  coverage_gain: number
-  novelty_score: number
-  cost_per_finding: number
-  average_adaptive_score?: number
+  expected_coverage_gain: number
+  mean_novelty: number
+  mean_information_gain: number
+  mean_adaptive_score: number
   runtime_ms: number
 }
 
 export interface ComparisonResult {
-  num_candidates: number
+  cohort_id: string
   strategies: StrategySummary[]
-  winner: BenchmarkStrategy
-  notes?: string
-}
-
-export interface BenchmarkResponse {
-  campaign_id: string
-  benchmark: ComparisonResult
+  winner?: BenchmarkStrategy
+  insufficient_data: boolean
+  missing_strategies?: string[]
+  notes: string
+  computed_at: string
 }
 
 /* ── Regression Test Pack ── */

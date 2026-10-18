@@ -1,7 +1,7 @@
-// Campaign & benchmark API endpoint tests — fetch is mocked, no network.
+// Campaign & adaptive-discovery API endpoint tests — fetch is mocked, no network.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-describe('campaignApi', () => {
+describe('campaign & discovery APIs', () => {
   const fetchMock = vi.fn()
 
   beforeEach(() => {
@@ -14,40 +14,53 @@ describe('campaignApi', () => {
     fetchMock.mockReset()
   })
 
-  it('list GETs /campaigns', async () => {
+  function lastCall() {
+    return fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
+  }
+
+  it('campaign list GETs /campaigns', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => [] })
     const { campaignApi } = await import('../api/endpoints')
     await campaignApi.list()
-    const url = String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0])
-    expect(url).toContain('/campaigns')
+    expect(String(lastCall()?.[0])).toContain('/campaigns')
   })
 
-  it('create POSTs to /campaigns', async () => {
+  it('campaign create POSTs to /campaigns', async () => {
     fetchMock.mockResolvedValue({
       ok: true, status: 201,
       json: async () => ({ id: 'abc', name: 'n', budget: 10 }),
     })
     const { campaignApi } = await import('../api/endpoints')
     await campaignApi.create({ name: 'n', description: 'd', budget: 10 })
-    const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]
-    expect(String(call?.[0])).toContain('/campaigns')
+    expect(String(lastCall()?.[0])).toContain('/campaigns')
+    expect((lastCall()?.[1] as RequestInit).method).toBe('POST')
+  })
+
+  it('discovery run POSTs strategy and budget to the cohort', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({}) })
+    const { discoveryApi } = await import('../api/endpoints')
+    await discoveryApi.run('cohort-1', { strategy: 'adaptive', budget: 7 })
+    const call = lastCall()
+    expect(String(call?.[0])).toContain('/cohorts/cohort-1/discovery')
     expect((call?.[1] as RequestInit).method).toBe('POST')
+    expect(String((call?.[1] as RequestInit).body)).toContain('"strategy":"adaptive"')
+    expect(String((call?.[1] as RequestInit).body)).toContain('"budget":7')
   })
 
-  it('benchmark GETs /campaigns/{id}/benchmark without params', async () => {
+  it('discovery latest GETs the cohort run history', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
-    const { campaignApi } = await import('../api/endpoints')
-    await campaignApi.benchmark('camp-1')
-    const url = String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0])
-    expect(url).toContain('/campaigns/camp-1/benchmark')
-    expect(url).not.toContain('?')
+    const { discoveryApi } = await import('../api/endpoints')
+    await discoveryApi.latest('cohort-1')
+    expect(String(lastCall()?.[0])).toContain('/cohorts/cohort-1/discovery')
+    expect((lastCall()?.[1] as RequestInit).method).toBe('GET')
   })
 
-  it('benchmark appends candidates query param', async () => {
+  it('benchmark GETs the cohort benchmark, not the removed campaign endpoint', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
-    const { campaignApi } = await import('../api/endpoints')
-    await campaignApi.benchmark('camp-1', 250)
-    const url = String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0])
-    expect(url).toContain('/campaigns/camp-1/benchmark?candidates=250')
+    const { discoveryApi } = await import('../api/endpoints')
+    await discoveryApi.benchmark('cohort-1')
+    const url = String(lastCall()?.[0])
+    expect(url).toContain('/cohorts/cohort-1/benchmark')
+    expect(url).not.toContain('/campaigns/')
   })
 })

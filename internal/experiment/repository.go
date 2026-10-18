@@ -62,10 +62,11 @@ func insertPair(ctx context.Context, tx pgx.Tx, p Pair) error {
 	_, err = tx.Exec(ctx, `
 		INSERT INTO experiment_pair
 		  (id, name, cohort_id, control_hash, manifest_hash, seed,
-		   declared_change, mutation_type, mutation_spec, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		   declared_change, mutation_type, mutation_spec, scenario_proposal_id, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		p.ID, p.Name, p.CohortID, p.ControlHash, p.ManifestHash,
-		p.Seed, p.DeclaredChange, string(p.MutationType), specJSON, string(p.Status),
+		p.Seed, p.DeclaredChange, string(p.MutationType), specJSON,
+		p.ScenarioProposalID, string(p.Status),
 	)
 	return wrapErr("insert experiment_pair", err)
 }
@@ -115,7 +116,7 @@ func (r *Repository) GetPair(ctx context.Context, id uuid.UUID) (Pair, error) {
 	const q = `
 		SELECT id, name, cohort_id, control_hash, manifest_hash, seed,
 		       declared_change, mutation_type, mutation_spec, status, error_msg,
-		       created_at, updated_at
+		       scenario_proposal_id, created_at, updated_at
 		FROM experiment_pair WHERE id = $1`
 	row := r.pool.QueryRow(ctx, q, id)
 	return scanPair(row)
@@ -128,7 +129,7 @@ func scanPair(row pgx.Row) (Pair, error) {
 	err := row.Scan(
 		&p.ID, &p.Name, &p.CohortID, &p.ControlHash, &p.ManifestHash, &p.Seed,
 		&p.DeclaredChange, &p.MutationType, &specJSON, &p.Status, &errMsg,
-		&p.CreatedAt, &p.UpdatedAt,
+		&p.ScenarioProposalID, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

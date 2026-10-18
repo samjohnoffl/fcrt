@@ -203,12 +203,13 @@ func (h *ExperimentHandler) CreateExperiment(w http.ResponseWriter, r *http.Requ
 	}
 
 	spec := experiment.PairSpec{
-		Name:           req.Name,
-		Input:          inputCtx,
-		Config:         cfg,
-		DeclaredChange: req.DeclaredChange,
-		MutationType:   mt,
-		MutationSpec:   req.MutationSpec,
+		Name:               req.Name,
+		Input:              inputCtx,
+		Config:             cfg,
+		DeclaredChange:     req.DeclaredChange,
+		MutationType:       mt,
+		MutationSpec:       req.MutationSpec,
+		ScenarioProposalID: req.ScenarioProposalID,
 	}
 
 	result, err := experiment.Execute(spec, sel, time.Now())
