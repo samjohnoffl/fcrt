@@ -491,47 +491,72 @@ to the dashboard.
 
 ## Deployment
 
+### Deployed architecture
+
+The stack currently runs entirely on free tiers:
+
+| Layer | Where | URL |
+|---|---|---|
+| Frontend | Firebase Hosting (Spark, no billing) | https://fcrt-511717.web.app |
+| API + worker | Render free web service, Docker runtime | https://fcrt-api.onrender.com |
+| Database | Neon free Postgres 16 (Frankfurt) | — |
+
+Neither the GCP project nor the Render workspace has a payment method. Cloud Run
+and Cloud SQL are **not** used: the GCP project has billing disabled, so they
+refuse to provision.
+
+Because the backend is outside GCP, Firebase Hosting cannot reverse-proxy to it
+(it can only rewrite to Cloud Run or Cloud Functions). The frontend therefore
+talks to the API by absolute origin, which means two things must always agree:
+the build-time `VITE_API_BASE_URL` and the API's `CORS_ORIGINS`.
+
 ### Frontend → Firebase Hosting
-
-Hosting is free (Spark plan) and serves the static `frontend/dist` bundle:
-
-```bash
-cd frontend && npm run build
-cd .. && firebase deploy --only hosting          # uses firebase.json + .firebaserc
-```
-
-`firebase.json` rewrites `/api/**` to the backend, so the SPA and API share an
-origin and no CORS or API-base configuration is needed in the build. **This
-rewrite only works when the backend is on Cloud Run / Cloud Functions** —
-Firebase Hosting cannot reverse-proxy to an arbitrary origin. For a non-GCP
-backend, point the frontend at the API's origin instead:
 
 ```bash
 cd frontend
-VITE_API_BASE_URL=https://fcrt-api.fly.dev npm run build
-cd .. && firebase deploy --only hosting
+VITE_API_BASE_URL=https://fcrt-api.onrender.com npm run build
+cd ..
+python3 scripts/deploy-hosting.py          # project/site default from .firebaserc
 ```
 
-...and allow the Hosting origin on the API via `CORS_ORIGINS`.
+`scripts/deploy-hosting.py` drives the Hosting REST API directly, so the
+`firebase-tools` CLI is not required. Use it when the CLI cannot be installed
+(its download host is often blocked) or when only a `gcloud` service account is
+available in CI. It needs `firebasehosting.googleapis.com` enabled and the
+project added to Firebase, both one-off steps documented in the script header.
 
-### Backend → container host
+`firebase.json` remains the canonical config for anyone who does have the CLI:
+`firebase deploy --only hosting` produces the same release.
 
-The backend is a single distroless image built from the repo `Dockerfile`
-(`fcrt-api`, `fcrt-worker`, `/migrate`). Ready-to-use configs are included for
-the two common free tiers:
+### Backend → Render
 
-| Host | Config | Notes |
-|---|---|---|
-| Fly.io | [`fly.toml`](fly.toml) | `fly deploy`; secrets via `fly secrets set`; run `/migrate up` once via `fly console` |
-| Render | [`render.yaml`](render.yaml) | Blueprint deploy; secrets prompted in the dashboard; includes a one-shot `fcrt-migrate` service |
+[`render.yaml`](render.yaml) describes the free service. To deploy by hand:
 
-Either way the API needs:
+1. **Database** — create a Neon project and take the *direct* connection string
+   (not the `-pooler` host: the API is a long-lived process, and Neon recommends
+   direct connections for those).
+2. **Service** — point Render at this repo (a public repo needs no GitHub App
+   install), runtime `docker`, plan `free`, region `frankfurt`, health check
+   `/healthz`, and `dockerCommand: /fcrt-all`.
+3. **Migrations** — run once, and again after any schema change:
 
-- a PostgreSQL 16 database (`DATABASE_URL`) — Neon/Supabase free tiers work
-- `AUTH_MODE=local`, `AUTH_SESSION_SECRET` (a long random value), `AUTH_USERS`
-- `GEMINI_API_KEY` for AI scenario generation
-- `CORS_ORIGINS` set to the Firebase Hosting origin
-- `/migrate up` run once before the first boot
+   ```bash
+   docker build -t fcrt .
+   docker run --rm --entrypoint /migrate -e DATABASE_URL='<neon-url>' fcrt up
+   ```
+
+4. **Environment** — `DATABASE_URL`, `AUTH_USERS`, `AUTH_SESSION_SECRET`
+   (`openssl rand -hex 32`), `GEMINI_API_KEY`, `GEMINI_MODEL`, and
+   `CORS_ORIGINS=https://<project>.web.app`. `AUTH_MODE=local` is the default.
+
+`/fcrt-all` runs the API and the job worker in one container. Render's free plan
+has no free background workers, and the runtime image is distroless (no shell to
+chain the binaries with), so `cmd/all` supervises both as child processes.
+
+Free-tier behaviour worth knowing: the service sleeps after 15 minutes without
+traffic (~1 minute to wake), Neon's compute suspends after a few minutes idle
+(the first query after that pays a short resume), and Render grants 750 instance
+hours per workspace per month.
 
 ### Alternative: all-GCP
 
@@ -552,16 +577,19 @@ Deployment artifacts:
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Builds `fcrt-api`, `fcrt-worker` and `/migrate` into one distroless image |
-| `fly.toml` | Fly.io app config (free tier) |
-| `render.yaml` | Render Blueprint (free tier, API + one-shot migration service) |
-| `scripts/gcp-setup.sh` | One-shot GCP provisioning + deploy |
-| `firebase.json` | Hosting config: serves `frontend/dist`, rewrites `/api/**` to the backend |
-| `.firebaserc` | Firebase project binding (rewritten by the setup script) |
+| `Dockerfile` | Builds `fcrt-api`, `fcrt-worker`, `/migrate` and `/fcrt-all` into one distroless image |
+| `cmd/all/main.go` | Supervises the API and worker in a single container for hosts without free workers |
+| `fly.toml` | Fly.io app config (free tier, requires a card) |
+| `render.yaml` | Render Blueprint (free tier, single `/fcrt-all` service) |
+| `scripts/deploy-hosting.py` | Firebase Hosting deploy over the REST API, no CLI needed |
+| `scripts/gcp-setup.sh` | One-shot GCP provisioning + deploy (needs billing) |
+| `firebase.json` | Hosting config for the CLI: serves `frontend/dist`, SPA fallback |
+| `.firebaserc` | Firebase project binding |
 | `.gcloudignore` | Keeps build artifacts out of the image upload |
 
-> Rotate the shared `GEMINI_API_KEY` before any public deployment, and change
-> `AUTH_USERS` away from the default test credentials.
+> **Rotate `GEMINI_API_KEY` before any public deployment** — the deployed service
+> uses a shared key with the default test credentials, so anyone who finds the
+> URL can spend it. Change `AUTH_USERS` away from `admin/admin` at the same time.
 
 ---
 

@@ -35,3 +35,7 @@ Thumbs.db
 # ── Local test exports ───────────────────────────────────────────────────────
 evidence_*.json
 *.log
+
+# Python bytecode
+__pycache__/
+*.pyc

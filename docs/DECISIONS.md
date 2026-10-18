@@ -187,5 +187,25 @@ Decisions are numbered sequentially. Never delete; supersede with a new entry.
 **Decision**: **Option B**.
 - **Design**: light theme driven entirely by CSS custom properties (`#f8f9fa` surfaces, `#dadce0` borders, `#202124` text, `#1a73e8` accent, Roboto). Emoji were replaced with inline SVG icons; the sidebar gained grouped sections and a user block showing the signed-in role; the sign-in screen became a two-column card with a role legend; the dead Vite boilerplate (`App.css`, `react.svg`) was deleted.
 - **Performance**: routes are `React.lazy` code-split behind a `Suspense` fallback. The initial JS chunk fell from 690 kB (192 kB gzip) to 214 kB (68 kB gzip); the charting library now loads only on pages that need it.
-- **Hosting**: Firebase Hosting (Spark, free) serves `frontend/dist` and rewrites `/api/**` to the backend so the SPA and API share an origin. The backend is a single distroless image that runs on any free-tier container host (Fly.io / Render / Railway / Koyeb) with a free-tier PostgreSQL (Neon / Supabase) and `GEMINI_API_KEY`; `/migrate up` runs once before first boot.
+- **Hosting**: Firebase Hosting (Spark, free) serves `frontend/dist`. The backend is a single distroless image that runs on any free-tier container host (Fly.io / Render / Railway / Koyeb) with a free-tier PostgreSQL (Neon / Supabase) and `GEMINI_API_KEY`; `/migrate up` runs once before first boot. (Superseded by DECISION-015: Hosting cannot reverse-proxy to a non-GCP backend, so the `/api/**` rewrite was dropped and the frontend targets the API by absolute origin.)
 - **Known blocker**: deploying to GCP requires billing on the project; that remains with the user to enable. `scripts/gcp-setup.sh` is kept for when it is.
+
+---
+
+## DECISION-015 · Deployed Topology: Firebase Hosting + Render + Neon
+**Status**: decided
+**Impact**: `cmd/all/main.go`, `Dockerfile`, `render.yaml`, `firebase.json`, `.firebaserc`, `scripts/deploy-hosting.py`, `frontend/src/api/client.ts`, `README.md`
+**Question**: DECISION-014 proposed sharing an origin via a Hosting `/api/**` rewrite, but Firebase Hosting only rewrites to Cloud Run or Cloud Functions, and the GCP project has billing disabled — so no backend could exist in GCP. Where do the API and database actually run, and how should the SPA reach the API?
+**Options**:
+- A) Enable GCP billing and use Cloud Run + Cloud SQL (~$10–30/month)
+- B) Free tiers: Firebase Hosting (frontend) + Render free web service (API) + Neon free Postgres, reached by absolute origin
+- C) Wait until billing is enabled and deploy nothing
+**Decision**: **Option B**.
+**Details**:
+- **Hosting cannot proxy the API.** The `/api/**` `run` rewrite was removed; the SPA calls `VITE_API_BASE_URL` directly. The consequence is that two settings must always agree: the build-time `VITE_API_BASE_URL` and the API's `CORS_ORIGINS`. A mismatch shows up as a CORS error in the browser, not as a 4xx.
+- **Neon, not Render Postgres.** Free Render Postgres *expires 30 days after creation* and is deleted after a 14-day grace period, which would take the data with it. Neon's free tier does not expire. The **direct** connection string is used rather than the `-pooler` host: the API is a long-lived process, which is exactly the case Neon recommends direct connections for (the pooled endpoint is for serverless/ephemeral clients and needs `simple_protocol` for pgx).
+- **One container, two processes.** Render's free plan has no background workers (paid from the first minute) and the runtime image is distroless, so `sh -c "worker & api"` is impossible. `cmd/all` starts the worker and then the API as children, forwards `SIGTERM`/`SIGINT`, escalates to `SIGKILL` after a 20s grace period, and exits non-zero when a child dies so Render restarts the container. `WORKER_BINARY` / `API_BINARY` make it configurable; the signal channel is injectable, which is what makes the shutdown paths testable.
+- **The container image is unchanged otherwise.** `/fcrt-api` and `/fcrt-worker` remain the entrypoints for `docker compose` and Cloud Run; `/fcrt-all` is opt-in via `dockerCommand`.
+- **Hosting deploys without the CLI.** `scripts/deploy-hosting.py` drives the Hosting REST API, because `firebase-tools` could not be installed (its download host returns 000 from this environment). Two API quirks it encodes: the version `config` dialect differs from `firebase.json` (`glob`/`path` + a header *map*, not `source`/`destination` + a header list), and the SHA-256 declared in `populateFiles` must be the hash of the *gzipped* bytes that are actually uploaded.
+- **`AUTH_MODE=local` with seeded `admin/admin` and `analyst/analyst`**, per DECISION-011/012, so the demo works on the public URL. This is a demo posture, not a production one — see the warning in the README.
+**Evidence**: live at https://fcrt-511717.web.app against https://fcrt-api.onrender.com. Verified through the browser: sign-in as admin, Dashboard/Cohorts/Scenarios/Users/Audit-log all rendering live data; `GET /users` 200 for admin and 403 for analyst; `/audit` 403 for analyst; no token 401. Worker verified in-container: `POST /cohorts` auto-locked after ~10s with 22 entities / 301 transactions. Gemini verified live: `POST /scenarios` returned a schema-valid `split_transaction` proposal with `gemini_model=gemini-3.8-flash` in 19s.

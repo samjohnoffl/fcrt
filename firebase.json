@@ -4,37 +4,20 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       {
-        "comment": "Proxy the API to the Cloud Run service (see scripts/gcp-setup.sh).",
-        "source": "/api/**",
-        "run": {
-          "serviceId": "fcrt-api",
-          "region": "us-east1"
-        }
-      },
-      {
-        "comment": "SPA fallback — all other routes serve the React app.",
+        "comment": "SPA fallback. There is no /api/** rewrite: the API runs on Render, not in GCP (the project has no billing), and the app reaches it via VITE_API_BASE_URL.",
         "source": "**",
         "destination": "/index.html"
       }
     ],
     "headers": [
       {
-        "source": "**/*.@(js|css|woff2|woff|png|jpg|svg|ico)",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "public, max-age=31536000, immutable"
-          }
-        ]
+        "comment": "Later rules win, so everything is no-cache by default and hashed assets are cached forever.",
+        "source": "**",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
       },
       {
-        "source": "/index.html",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
+        "source": "**/*.@(js|css|woff2|woff|png|jpg|svg|ico)",
+        "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
       }
     ]
   }
