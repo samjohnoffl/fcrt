@@ -86,4 +86,20 @@ describe('API client fetch behaviour', () => {
     vi.unstubAllEnvs()
     vi.resetModules()
   })
+
+  it('reports a 2xx that is not JSON as an unreachable API', async () => {
+    // A static host answers unrouted /api/** requests with index.html, so a
+    // successful-looking response that will not parse means no backend is there.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => { throw new SyntaxError("Unexpected token '<'") },
+    })
+    const { api } = await import('../api/client')
+    // Assert on fields rather than instanceof: an earlier test resets the module
+    // registry, so this import's FetchError is a different class object.
+    const err = await api.get('/cohorts').catch((e: unknown) => e)
+    expect(err).toMatchObject({ code: 'BAD_RESPONSE', status: 200 })
+    expect((err as Error).message).toMatch(/not reachable/)
+  })
 })

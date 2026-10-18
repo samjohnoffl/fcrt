@@ -72,7 +72,19 @@ async function request<T>(
   // 204 No Content
   if (res.status === 204) return undefined as unknown as T
 
-  const json: unknown = await res.json()
+  let json: unknown
+  try {
+    json = await res.json()
+  } catch {
+    // A 2xx that is not JSON means the API did not answer us — typically a static
+    // host serving index.html for an unrouted /api/** path because no backend is
+    // deployed at this origin. Surface that instead of a raw parse error.
+    throw new FetchError(
+      res.status,
+      'The API is not reachable from this site. No backend is deployed for this origin.',
+      'BAD_RESPONSE',
+    )
+  }
   // Success responses are wrapped as {"data": ...} by internal/api/response.go.
   // Unwrap a single-key {data} envelope; pass anything else through unchanged
   // (a bare array, or a raw document like the regression pack).

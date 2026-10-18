@@ -1,20 +1,38 @@
 # Render Blueprint for FCRT (free tier).
 #
-#   Render dashboard → New → Blueprint → point at this repo.
-#   Secrets marked `sync: false` are prompted for in the dashboard.
+#   Render dashboard → New → Blueprint → point at this repository.
 #
-# The free plan spins the service down when idle, so the first request after a
-# pause takes a few seconds. Migrations are applied on each deploy by overriding
-# the start command; the API is then started normally.
+# One free web service runs the API *and* the job worker, via the `/fcrt-all`
+# launcher. Render's free plan has no background workers, so a second service
+# for `cmd/worker` is not an option; `/fcrt-all` starts both binaries in the one
+# container and supervises them (see cmd/all/main.go).
 #
-# For the background worker, add a second service with:
-#   dockerCommand: /fcrt-worker
+# The database is NOT on Render: free Render Postgres expires 30 days after
+# creation, which would take the data with it. Use Neon's free tier instead,
+# which does not expire:
+#
+#   neon.tech → New project → copy the connection string into DATABASE_URL
+#
+# Migrations do not run at boot. Apply them once before the first deploy, and
+# again after any schema change, from a machine with Docker:
+#
+#   docker build -t fcrt .
+#   docker run --rm -e DATABASE_URL='<neon-connection-string>' fcrt /migrate up
+#
+# The free plan spins the service down after 15 minutes without traffic, so the
+# first request after a pause takes about a minute; the worker starts with the
+# container and drains queued jobs once it is up.
+#
+# Secrets marked `sync: false` are prompted for in the dashboard and never live
+# in the repository.
 
 services:
   - type: web
     name: fcrt-api
     runtime: docker
     dockerfilePath: ./Dockerfile
+    # Runs the API and the worker together — see the note above.
+    dockerCommand: /fcrt-all
     plan: free
     region: frankfurt
     healthCheckPath: /healthz
@@ -30,7 +48,11 @@ services:
         value: /migrations
       - key: LOG_LEVEL
         value: info
-      # Prompted for in the dashboard — never stored in the repo.
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: WORKER_POLL_INTERVAL_SECONDS
+        value: "5"
+      # Required secrets — set these in the dashboard.
       - key: DATABASE_URL
         sync: false
       - key: AUTH_USERS
@@ -39,23 +61,6 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.8-flash
+      # The deployed frontend origin, so the browser may call the API.
       - key: CORS_ORIGINS
-        sync: false
-
-  # One-shot migration runner. Render has no job primitive on the free plan, so
-  # this is deployed, run once (Clear build cache / manual shell), then removed —
-  # or run `psql` against the database with the SQL in migrations/ instead.
-  - type: web
-    name: fcrt-migrate
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerCommand: /migrate up
-    plan: free
-    region: frankfurt
-    envVars:
-      - key: MIGRATIONS_DIR
-        value: /migrations
-      - key: DATABASE_URL
         sync: false
