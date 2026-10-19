@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,15 +48,22 @@ func NewEvaluator(cfg *ControlConfig) (*Evaluator, error) {
 // byte-identical output across repeated calls with identical inputs.
 func (ev *Evaluator) Evaluate(sel *bank.BatchSelection) HarnessResult {
 	var alerts []Alert
+	outcomes := make([]RuleOutcome, 0, len(AllRules))
 
-	if ev.config.IsRuleEnabled(RuleStructuring) {
-		alerts = append(alerts, ev.runStructuring(sel)...)
-	}
-	if ev.config.IsRuleEnabled(RuleLayering) {
-		alerts = append(alerts, ev.runLayering(sel)...)
-	}
-	if ev.config.IsRuleEnabled(RuleRapidMovement) {
-		alerts = append(alerts, ev.runRapidMovement(sel)...)
+	for _, id := range AllRules {
+		if !ev.config.IsRuleEnabled(id) {
+			outcomes = append(outcomes, RuleOutcome{
+				RuleID:      id,
+				RuleVersion: ev.config.ConfigHash,
+				Status:      OutcomeNotApplicable,
+				ReasonCode:  ReasonRuleDisabled,
+				Detail:      "rule is not enabled in this control configuration",
+			})
+			continue
+		}
+		oc, ruleAlerts := ev.runRuleSafe(id, sel)
+		outcomes = append(outcomes, oc)
+		alerts = append(alerts, ruleAlerts...)
 	}
 
 	// Sort alerts for deterministic output order.
@@ -71,8 +79,117 @@ func (ev *Evaluator) Evaluate(sel *bank.BatchSelection) HarnessResult {
 		CohortID:    sel.CohortID,
 		RuleVersion: ev.config.ConfigHash,
 		Alerts:      alerts,
+		Outcomes:    outcomes,
 		RunAt:       time.Time{}, // zero: callers set this from their own clock
 	}
+}
+
+// runRuleSafe isolates one control. A panic inside a rule is converted to a
+// FAILED outcome; it must never be reported as NOT TRIGGERED, because that
+// would claim the control examined behaviour it never examined.
+func (ev *Evaluator) runRuleSafe(id RuleID, sel *bank.BatchSelection) (oc RuleOutcome, alerts []Alert) {
+	oc = RuleOutcome{RuleID: id, RuleVersion: ev.config.ConfigHash}
+
+	defer func() {
+		if r := recover(); r != nil {
+			oc.Status = OutcomeFailed
+			oc.ReasonCode = ReasonEvaluationError
+			oc.Detail = fmt.Sprintf("control error: %v", r)
+			alerts = nil
+		}
+	}()
+
+	alerts = ev.runRule(id, sel)
+	if len(alerts) == 0 {
+		oc.Status, oc.ReasonCode, oc.Detail = ev.noTriggerStatus(id, sel)
+		return oc, alerts
+	}
+
+	oc.Status = OutcomeTriggered
+	oc.ReasonCode = ReasonPatternDetected
+	oc.Detail = alerts[0].Description
+	oc.EventIDs, oc.AccountIDs, oc.EntityIDs, oc.AmountCents, oc.Currency = collectAlertRefs(alerts)
+	return oc, alerts
+}
+
+// runRule dispatches to the concrete control implementation.
+func (ev *Evaluator) runRule(id RuleID, sel *bank.BatchSelection) []Alert {
+	switch id {
+	case RuleStructuring:
+		return ev.runStructuring(sel)
+	case RuleLayering:
+		return ev.runLayering(sel)
+	case RuleRapidMovement:
+		return ev.runRapidMovement(sel)
+	case RuleVelocity:
+		return ev.runVelocity(sel)
+	case RuleCounterpartyExpansion:
+		return ev.runCounterpartyExpansion(sel)
+	case RuleDormancyActivation:
+		return ev.runDormancyActivation(sel)
+	case RuleGeographicBand:
+		return ev.runGeographicBand(sel)
+	case RuleOwnershipRelationship:
+		return ev.runOwnershipRelationship(sel)
+	default:
+		panic(fmt.Sprintf("unknown control %q", id))
+	}
+}
+
+// noTriggerStatus distinguishes "examined and clean" from "could not examine".
+func (ev *Evaluator) noTriggerStatus(id RuleID, sel *bank.BatchSelection) (OutcomeStatus, ReasonCode, string) {
+	if len(sel.Transactions) == 0 {
+		return OutcomeNotApplicable, ReasonNoEvents, "no synthetic events in the selected batch"
+	}
+	switch id {
+	case RuleDormancyActivation:
+		if !hasAccountWithMinTx(sel, 2) {
+			return OutcomeInconclusive, ReasonInsufficientHistory,
+				"no account has enough history to measure a dormancy gap"
+		}
+	case RuleGeographicBand:
+		if !hasCountryData(sel) {
+			return OutcomeNotApplicable, ReasonMissingField, "counterparty country data is unavailable"
+		}
+	case RuleOwnershipRelationship:
+		if !hasEntityWithAccounts(sel, 2) {
+			return OutcomeNotApplicable, ReasonMissingField, "no entity controls multiple accounts"
+		}
+	}
+	return OutcomeNotTriggered, ReasonThresholdNotMet, "control evaluated the behaviour and found no match"
+}
+
+// collectAlertRefs merges alert references into one outcome.
+func collectAlertRefs(alerts []Alert) (events, accounts, entities []uuid.UUID, amount int64, currency string) {
+	seenEvent := map[uuid.UUID]bool{}
+	seenAcct := map[uuid.UUID]bool{}
+	seenEntity := map[uuid.UUID]bool{}
+	for _, a := range alerts {
+		for _, id := range a.TxIDs {
+			if !seenEvent[id] {
+				seenEvent[id] = true
+				events = append(events, id)
+			}
+		}
+		for _, id := range a.AccountIDs {
+			if !seenAcct[id] {
+				seenAcct[id] = true
+				accounts = append(accounts, id)
+			}
+		}
+		if !seenEntity[a.EntityID] {
+			seenEntity[a.EntityID] = true
+			entities = append(entities, a.EntityID)
+		}
+		amount += a.AmountCents
+		if currency == "" {
+			currency = a.Currency
+		}
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].String() < events[j].String() })
+	sort.Slice(accounts, func(i, j int) bool { return accounts[i].String() < accounts[j].String() })
+	sort.Slice(entities, func(i, j int) bool { return entities[i].String() < entities[j].String() })
+	return events, accounts, entities, amount, currency
 }
 
 // ─── Structuring Rule ─────────────────────────────────────────────────────────
@@ -393,6 +510,437 @@ func (ev *Evaluator) runRapidMovement(sel *bank.BatchSelection) []Alert {
 		}
 	}
 	return alerts
+}
+
+// ─── Velocity Rule ────────────────────────────────────────────────────────────
+//
+// Fires when an account's outbound activity rises materially between the first
+// and second half of the evaluation window (count or value).
+
+func (ev *Evaluator) runVelocity(sel *bank.BatchSelection) []Alert {
+	cfg := ev.config.Velocity
+	_, end := evalWindow(sel)
+	window := time.Duration(cfg.WindowHours) * time.Hour
+	evalStart := end.Add(-window)
+	baselineStart := evalStart.Add(-window)
+
+	acctToEntity := ownerMap(sel)
+
+	type stat struct {
+		count    int
+		value    int64
+		currency string
+		ids      []uuid.UUID
+	}
+	before := make(map[uuid.UUID]*stat)
+	after := make(map[uuid.UUID]*stat)
+
+	add := func(m map[uuid.UUID]*stat, tx bank.Transaction) {
+		s := m[tx.FromAccountID]
+		if s == nil {
+			s = &stat{}
+			m[tx.FromAccountID] = s
+		}
+		s.count++
+		s.value += tx.AmountCents
+		s.ids = append(s.ids, tx.ID)
+		if s.currency == "" {
+			s.currency = tx.Currency
+		}
+	}
+	for _, tx := range sel.Transactions {
+		switch {
+		case tx.TxTimestamp.Before(baselineStart):
+			continue
+		case tx.TxTimestamp.Before(evalStart):
+			add(before, tx)
+		case tx.TxTimestamp.Before(end):
+			add(after, tx)
+		default:
+			continue
+		}
+	}
+
+	var alerts []Alert
+	for acct, a := range after {
+		b := before[acct]
+		bc, bv := 0, int64(0)
+		if b != nil {
+			bc, bv = b.count, b.value
+		}
+		countRise := a.count - bc
+		valueRose := bv > 0 && float64(a.value) >= float64(bv)*(1.0+float64(cfg.MinValueIncreasePct)/100.0)
+		if countRise < cfg.MinCountIncrease && !valueRose {
+			continue
+		}
+		entity := acctToEntity[acct]
+		alerts = append(alerts, Alert{
+			ID:           deterministicAlertID(RuleVelocity, entity, acct, evalStart),
+			RuleID:       RuleVelocity,
+			RuleVersion:  ev.config.ConfigHash,
+			EntityID:     entity,
+			AccountIDs:   []uuid.UUID{acct},
+			TxIDs:        a.ids,
+			AmountCents:  a.value,
+			Currency:     a.currency,
+			SubjectType:  entityTypeMap(sel)[entity],
+			ActivityType: "velocity",
+			Severity:     "medium",
+			Description: fmt.Sprintf(
+				"velocity: outbound activity rose from %d to %d transactions over %dh (value %d→%d cents)",
+				bc, a.count, cfg.WindowHours, bv, a.value,
+			),
+		})
+	}
+	return alerts
+}
+
+// ─── Counterparty Expansion Rule ──────────────────────────────────────────────
+//
+// Fires when the number of distinct counterparties grows by at least
+// MinNewCounterparties between the preceding window and the evaluation window.
+
+func (ev *Evaluator) runCounterpartyExpansion(sel *bank.BatchSelection) []Alert {
+	cfg := ev.config.CounterpartyExpansion
+	_, end := evalWindow(sel)
+	window := time.Duration(cfg.WindowHours) * time.Hour
+	evalStart := end.Add(-window)
+	baselineStart := evalStart.Add(-window)
+
+	acctToEntity := ownerMap(sel)
+	subjects := entityTypeMap(sel)
+
+	type counts struct {
+		counterparties map[uuid.UUID]bool
+		ids            []uuid.UUID
+	}
+	before := make(map[uuid.UUID]*counts)
+	after := make(map[uuid.UUID]*counts)
+
+	for _, tx := range sel.Transactions {
+		entity, ok := acctToEntity[tx.FromAccountID]
+		if !ok {
+			continue
+		}
+		var bucket map[uuid.UUID]*counts
+		switch {
+		case tx.TxTimestamp.Before(baselineStart):
+			continue
+		case tx.TxTimestamp.Before(evalStart):
+			bucket = before
+		case tx.TxTimestamp.Before(end):
+			bucket = after
+		default:
+			continue
+		}
+		c := bucket[entity]
+		if c == nil {
+			c = &counts{counterparties: make(map[uuid.UUID]bool)}
+			bucket[entity] = c
+		}
+		c.counterparties[tx.ToAccountID] = true
+		c.ids = append(c.ids, tx.ID)
+	}
+
+	var alerts []Alert
+	for entity, a := range after {
+		prev := 0
+		if b := before[entity]; b != nil {
+			prev = len(b.counterparties)
+		}
+		if len(a.counterparties) < cfg.MinNewCounterparties || len(a.counterparties) < prev+cfg.MinNewCounterparties {
+			continue
+		}
+		alerts = append(alerts, Alert{
+			ID:           deterministicAlertID(RuleCounterpartyExpansion, entity, entity, evalStart),
+			RuleID:       RuleCounterpartyExpansion,
+			RuleVersion:  ev.config.ConfigHash,
+			EntityID:     entity,
+			TxIDs:        a.ids,
+			Currency:     "",
+			SubjectType:  subjects[entity],
+			ActivityType: "counterparty_expansion",
+			Severity:     "medium",
+			Description: fmt.Sprintf(
+				"counterparty_expansion: distinct counterparties rose from %d to %d within %dh",
+				prev, len(a.counterparties), cfg.WindowHours,
+			),
+		})
+	}
+	return alerts
+}
+
+// ─── Dormancy Activation Rule ─────────────────────────────────────────────────
+//
+// Fires when an account has no activity for DormantDays and then resumes with a
+// transaction at or above MinResumeAmountCents.
+
+func (ev *Evaluator) runDormancyActivation(sel *bank.BatchSelection) []Alert {
+	cfg := ev.config.Dormancy
+	acctToEntity := ownerMap(sel)
+	subjects := entityTypeMap(sel)
+
+	byAcct := make(map[uuid.UUID][]bank.Transaction)
+	for _, tx := range sel.Transactions {
+		byAcct[tx.FromAccountID] = append(byAcct[tx.FromAccountID], tx)
+		byAcct[tx.ToAccountID] = append(byAcct[tx.ToAccountID], tx)
+	}
+
+	dormant := time.Duration(cfg.DormantDays) * 24 * time.Hour
+	var alerts []Alert
+
+	for acct, txs := range byAcct {
+		if len(txs) < 2 {
+			continue
+		}
+		sort.Slice(txs, func(i, j int) bool { return txs[i].TxTimestamp.Before(txs[j].TxTimestamp) })
+		for i := 1; i < len(txs); i++ {
+			gap := txs[i].TxTimestamp.Sub(txs[i-1].TxTimestamp)
+			if gap < dormant || txs[i].AmountCents < cfg.MinResumeAmountCents {
+				continue
+			}
+			entity := acctToEntity[acct]
+			alerts = append(alerts, Alert{
+				ID:           deterministicAlertID(RuleDormancyActivation, entity, acct, txs[i].TxTimestamp),
+				RuleID:       RuleDormancyActivation,
+				RuleVersion:  ev.config.ConfigHash,
+				EntityID:     entity,
+				AccountIDs:   []uuid.UUID{acct},
+				TxIDs:        []uuid.UUID{txs[i-1].ID, txs[i].ID},
+				AmountCents:  txs[i].AmountCents,
+				Currency:     txs[i].Currency,
+				SubjectType:  subjects[entity],
+				ActivityType: "dormancy_activation",
+				Severity:     "medium",
+				Description: fmt.Sprintf(
+					"dormancy_activation: account inactive for %d days then resumed with %d cents",
+					int(gap.Hours()/24), txs[i].AmountCents,
+				),
+			})
+			break // one alert per account
+		}
+	}
+	return alerts
+}
+
+// ─── Geographic Band Rule ─────────────────────────────────────────────────────
+//
+// Fires when an entity whose own jurisdiction is not high-risk sends at least
+// MinTransactions to counterparties in a high-risk jurisdiction.
+
+func (ev *Evaluator) runGeographicBand(sel *bank.BatchSelection) []Alert {
+	cfg := ev.config.Geographic
+	if len(cfg.HighRiskCountryCodes) == 0 {
+		return nil
+	}
+	high := make(map[string]bool, len(cfg.HighRiskCountryCodes))
+	for _, c := range cfg.HighRiskCountryCodes {
+		high[strings.ToUpper(c)] = true
+	}
+
+	acctToEntity := ownerMap(sel)
+	country := make(map[uuid.UUID]string, len(sel.Entities))
+	subjects := entityTypeMap(sel)
+	for _, e := range sel.Entities {
+		country[e.ID] = strings.ToUpper(e.CountryCode)
+	}
+
+	type exposure struct {
+		ids  []uuid.UUID
+		acct uuid.UUID
+	}
+	byEntity := make(map[uuid.UUID]*exposure)
+
+	for _, tx := range sel.Transactions {
+		fromEntity, ok := acctToEntity[tx.FromAccountID]
+		if !ok {
+			continue
+		}
+		toEntity, ok := acctToEntity[tx.ToAccountID]
+		if !ok {
+			continue
+		}
+		if high[country[fromEntity]] || !high[country[toEntity]] {
+			continue
+		}
+		x := byEntity[fromEntity]
+		if x == nil {
+			x = &exposure{acct: tx.FromAccountID}
+			byEntity[fromEntity] = x
+		}
+		x.ids = append(x.ids, tx.ID)
+	}
+
+	var alerts []Alert
+	for entity, x := range byEntity {
+		if len(x.ids) < cfg.MinTransactions {
+			continue
+		}
+		alerts = append(alerts, Alert{
+			ID:           deterministicAlertID(RuleGeographicBand, entity, x.acct, time.Time{}),
+			RuleID:       RuleGeographicBand,
+			RuleVersion:  ev.config.ConfigHash,
+			EntityID:     entity,
+			AccountIDs:   []uuid.UUID{x.acct},
+			TxIDs:        x.ids,
+			SubjectType:  subjects[entity],
+			ActivityType: "geographic_band",
+			Severity:     "high",
+			Description: fmt.Sprintf(
+				"geographic_band: %d transactions to high-risk jurisdictions from a non-high-risk entity",
+				len(x.ids),
+			),
+		})
+	}
+	return alerts
+}
+
+// ─── Ownership Relationship Rule ──────────────────────────────────────────────
+//
+// Fires when an entity controls at least MinLinkedAccounts accounts and moves
+// funds between those linked accounts at least MinTransactions times within
+// WindowHours. The signal is shared control, not merely shared ownership.
+
+func (ev *Evaluator) runOwnershipRelationship(sel *bank.BatchSelection) []Alert {
+	cfg := ev.config.Ownership
+	_, end := evalWindow(sel)
+	start := end.Add(-time.Duration(cfg.WindowHours) * time.Hour)
+
+	acctToEntity := ownerMap(sel)
+	subjects := entityTypeMap(sel)
+
+	entityAccounts := make(map[uuid.UUID]map[uuid.UUID]bool)
+	for _, a := range sel.Accounts {
+		if entityAccounts[a.EntityID] == nil {
+			entityAccounts[a.EntityID] = make(map[uuid.UUID]bool)
+		}
+		entityAccounts[a.EntityID][a.ID] = true
+	}
+
+	type linked struct {
+		txIDs    []uuid.UUID
+		accounts map[uuid.UUID]bool
+	}
+	byEntity := make(map[uuid.UUID]*linked)
+
+	for _, tx := range sel.Transactions {
+		if tx.TxTimestamp.Before(start) || !tx.TxTimestamp.Before(end) {
+			continue
+		}
+		fromEntity, ok1 := acctToEntity[tx.FromAccountID]
+		toEntity, ok2 := acctToEntity[tx.ToAccountID]
+		if !ok1 || !ok2 || fromEntity != toEntity {
+			continue
+		}
+		if len(entityAccounts[fromEntity]) < cfg.MinLinkedAccounts {
+			continue
+		}
+		l := byEntity[fromEntity]
+		if l == nil {
+			l = &linked{accounts: make(map[uuid.UUID]bool)}
+			byEntity[fromEntity] = l
+		}
+		l.txIDs = append(l.txIDs, tx.ID)
+		l.accounts[tx.FromAccountID] = true
+		l.accounts[tx.ToAccountID] = true
+	}
+
+	var alerts []Alert
+	for entity, l := range byEntity {
+		if len(l.accounts) < cfg.MinLinkedAccounts || len(l.txIDs) < cfg.MinTransactions {
+			continue
+		}
+		acctIDs := make([]uuid.UUID, 0, len(l.accounts))
+		for id := range l.accounts {
+			acctIDs = append(acctIDs, id)
+		}
+		sort.Slice(acctIDs, func(i, j int) bool { return acctIDs[i].String() < acctIDs[j].String() })
+		alerts = append(alerts, Alert{
+			ID:           deterministicAlertID(RuleOwnershipRelationship, entity, acctIDs[0], start),
+			RuleID:       RuleOwnershipRelationship,
+			RuleVersion:  ev.config.ConfigHash,
+			EntityID:     entity,
+			AccountIDs:   acctIDs,
+			TxIDs:        l.txIDs,
+			SubjectType:  subjects[entity],
+			ActivityType: "ownership_relationship",
+			Severity:     "high",
+			Description: fmt.Sprintf(
+				"ownership_relationship: %d linked accounts moved funds between themselves %d times within %dh",
+				len(acctIDs), len(l.txIDs), cfg.WindowHours,
+			),
+		})
+	}
+	return alerts
+}
+
+// ─── Rule helpers ─────────────────────────────────────────────────────────────
+
+// ownerMap indexes accounts by their owning entity.
+func ownerMap(sel *bank.BatchSelection) map[uuid.UUID]uuid.UUID {
+	m := make(map[uuid.UUID]uuid.UUID, len(sel.Accounts))
+	for _, a := range sel.Accounts {
+		m[a.ID] = a.EntityID
+	}
+	return m
+}
+
+// evalWindow returns the evaluation interval. It prefers the pinned selection
+// window and falls back to the observed transaction range for unit tests or
+// partially pinned selections.
+func evalWindow(sel *bank.BatchSelection) (time.Time, time.Time) {
+	if !sel.WindowStart.IsZero() && !sel.WindowEnd.IsZero() && sel.WindowEnd.After(sel.WindowStart) {
+		return sel.WindowStart, sel.WindowEnd
+	}
+	if len(sel.Transactions) == 0 {
+		return sel.WindowStart, sel.WindowEnd
+	}
+	start, end := sel.Transactions[0].TxTimestamp, sel.Transactions[0].TxTimestamp
+	for _, tx := range sel.Transactions[1:] {
+		if tx.TxTimestamp.Before(start) {
+			start = tx.TxTimestamp
+		}
+		if tx.TxTimestamp.After(end) {
+			end = tx.TxTimestamp
+		}
+	}
+	return start, end.Add(time.Second)
+}
+
+func hasAccountWithMinTx(sel *bank.BatchSelection, min int) bool {
+	counts := make(map[uuid.UUID]int)
+	for _, tx := range sel.Transactions {
+		counts[tx.FromAccountID]++
+		counts[tx.ToAccountID]++
+	}
+	for _, n := range counts {
+		if n >= min {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCountryData(sel *bank.BatchSelection) bool {
+	for _, e := range sel.Entities {
+		if e.CountryCode != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEntityWithAccounts(sel *bank.BatchSelection, min int) bool {
+	counts := make(map[uuid.UUID]int)
+	for _, a := range sel.Accounts {
+		counts[a.EntityID]++
+	}
+	for _, n := range counts {
+		if n >= min {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── SAR field helpers ────────────────────────────────────────────────────────

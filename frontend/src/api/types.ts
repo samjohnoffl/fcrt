@@ -170,14 +170,41 @@ export interface EvidenceBundle {
 }
 
 /* ── Coverage ── */
+export type OutcomeStatus =
+  | 'triggered'
+  | 'not_triggered'
+  | 'not_applicable'
+  | 'inconclusive'
+  | 'failed'
+
 export interface CoverageRule {
   id: string
   rule_id: string
   rule_version: string
   times_triggered: number
+  times_not_triggered: number
+  times_not_applicable: number
+  times_inconclusive: number
+  times_failed: number
+  last_status?: OutcomeStatus
   last_triggered_at?: string
+  last_evaluated_at?: string
   coverage_weight: number
   updated_at: string
+}
+
+export interface ScenarioCoverage {
+  dimension: string
+  value: string
+  times_seen: number
+  last_seen_at: string
+}
+
+export interface OutcomeCoverage {
+  rule_id: string
+  status: OutcomeStatus
+  times_seen: number
+  last_seen_at: string
 }
 
 export interface CoverageSummary {
@@ -185,7 +212,24 @@ export interface CoverageSummary {
   covered_rules: number
   coverage_pct: number
   rules: CoverageRule[]
+  scenario: ScenarioCoverage[]
+  outcomes: OutcomeCoverage[]
 }
+
+/* ── Reviews ── */
+export type ReviewDecisionValue = 'approved' | 'rejected' | 'escalated'
+
+export interface ReviewDecision {
+  id: string
+  pair_id: string
+  reviewer: string
+  decision: ReviewDecisionValue
+  rationale: string
+  created_at: string
+}
+
+/** The queue flattens the pair and its outcome summary. */
+export interface ReviewQueueItem extends ExperimentPair {}
 
 /* ── Campaign ── */
 export type CampaignStatus = 'active' | 'completed' | 'paused'

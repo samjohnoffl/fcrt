@@ -75,6 +75,7 @@ func Execute(spec PairSpec, sel *bank.BatchSelection, startedAt time.Time) (*Exe
 		AlertCount:   len(baselineResult.Alerts),
 		AlertSummary: summariseAlerts(baselineResult.Alerts),
 		RawAlerts:    baselineResult.Alerts,
+		Outcomes:     baselineResult.Outcomes,
 		StartedAt:    startedAt,
 		CompletedAt:  baselineCompleted,
 	}
@@ -96,6 +97,7 @@ func Execute(spec PairSpec, sel *bank.BatchSelection, startedAt time.Time) (*Exe
 		AlertCount:   len(variantResult.Alerts),
 		AlertSummary: summariseAlerts(variantResult.Alerts),
 		RawAlerts:    variantResult.Alerts,
+		Outcomes:     variantResult.Outcomes,
 		StartedAt:    startedAt,
 		CompletedAt:  startedAt,
 	}
@@ -115,6 +117,7 @@ func Execute(spec PairSpec, sel *bank.BatchSelection, startedAt time.Time) (*Exe
 		MutationType:       spec.MutationType,
 		MutationSpec:       spec.MutationSpec,
 		ScenarioProposalID: spec.ScenarioProposalID,
+		CampaignID:         spec.CampaignID,
 		Status:             StatusCompleted,
 		CreatedAt:          startedAt,
 		UpdatedAt:          startedAt,

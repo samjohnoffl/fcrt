@@ -2,6 +2,8 @@ package payment
 
 import (
 	"sort"
+
+	"github.com/google/uuid"
 )
 
 // Scored is a payment message with its extracted features and intelligence score.
@@ -17,9 +19,42 @@ func Analyze(msg Message, ctx Context) Scored {
 	return Scored{Message: msg, Features: f, Score: f.IntelligenceScore()}
 }
 
+// Deduplicate removes repeated ledger records from a batch.
+//
+// Two messages are the same record when their SourceRecordHash matches; when
+// that is absent (hand-built messages in tests) the source transaction ID is
+// used, then the message ID. Messages with no identity at all are never
+// dropped. The second return value holds the duplicates that were removed, so
+// a caller can report how many records were suppressed.
+func Deduplicate(msgs []Message) (unique, duplicates []Message) {
+	seen := make(map[string]bool, len(msgs))
+	for _, m := range msgs {
+		key := m.SourceRecordHash
+		if key == "" && m.SourceTxID != uuid.Nil {
+			key = "tx:" + m.SourceTxID.String()
+		}
+		if key == "" && m.MsgID != "" {
+			key = "msg:" + m.MsgID
+		}
+		if key == "" {
+			unique = append(unique, m)
+			continue
+		}
+		if seen[key] {
+			duplicates = append(duplicates, m)
+			continue
+		}
+		seen[key] = true
+		unique = append(unique, m)
+	}
+	return unique, duplicates
+}
+
 // AnalyzeBatch scores a slice of messages and returns them sorted by descending
 // intelligence score (most suspicious first). Ties break on MsgID for determinism.
+// Duplicate ledger records are removed first (see Deduplicate).
 func AnalyzeBatch(msgs []Message, ctx Context) []Scored {
+	msgs, _ = Deduplicate(msgs)
 	out := make([]Scored, len(msgs))
 	for i, m := range msgs {
 		out[i] = Analyze(m, ctx)

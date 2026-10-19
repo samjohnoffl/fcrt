@@ -74,6 +74,16 @@ type RemittanceInfo struct {
 type Message struct {
 	// MsgID is the message identifier (MT103 field 20 / pacs.008 MsgId).
 	MsgID string `json:"msg_id"`
+	// MessageFamily is the normalised message type ("pacs.008" or "mt103").
+	MessageFamily string `json:"message_family"`
+	// NormalizationVersion identifies the mapping rules used to produce this
+	// message, so two messages are only compared when they were normalised the
+	// same way.
+	NormalizationVersion string `json:"normalization_version"`
+	// SourceRecordHash is a deterministic hash of the source ledger record.
+	// It is the double-count guard: the same record normalised twice produces
+	// the same hash and can be deduplicated before aggregation.
+	SourceRecordHash string `json:"source_record_hash"`
 	// UETR is the Unique End-to-end Transaction Reference (SWIFT gpi).
 	UETR uuid.UUID `json:"uetr"`
 	// CreatedAt is when the message was created locally.
@@ -102,3 +112,13 @@ type Message struct {
 func NewMessageID(txID uuid.UUID) string {
 	return "MSG-" + txID.String()[:13]
 }
+
+// Supported message families.
+const (
+	MessageFamilyPacs008 = "pacs.008"
+	MessageFamilyMT103   = "mt103"
+)
+
+// NormalizationVersion is the version of the transaction -> message mapping.
+// Bump it when the mapping changes in a way that would alter extracted features.
+const NormalizationVersion = "v1.0.0"

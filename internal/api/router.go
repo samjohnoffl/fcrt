@@ -5,9 +5,11 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/yourorg/financial-crime-red-team/internal/audit"
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
+	"github.com/yourorg/financial-crime-red-team/internal/campaign"
 	"github.com/yourorg/financial-crime-red-team/internal/coverage"
 	"github.com/yourorg/financial-crime-red-team/internal/discovery"
 	"github.com/yourorg/financial-crime-red-team/internal/evidence"
@@ -37,8 +40,12 @@ type RouterConfig struct {
 	JobRepo        *job.Repository
 	EvidenceRepo   *evidence.Repository
 	DiscoveryRepo  *discovery.Repository
+	CampaignRepo   *campaign.Repository
 	Provider       scenario.GeminiProvider // nil = Vertex AI not configured
 	CORSOrigins    []string
+	// Readiness checks downstream dependencies (the database). It is used by
+	// /health/ready; nil means readiness is reported as unchecked.
+	Readiness func(ctx context.Context) error
 }
 
 // NewRouter builds and returns the fully-configured chi router.
@@ -50,22 +57,44 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware(cfg.CORSOrigins))
 
-	// Health check (unauthenticated — used by Cloud Run health probe).
+	// Health checks (unauthenticated — used by load balancers and probes).
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	// Liveness: the process is up. It deliberately does not touch the database,
+	// so a sleeping free-tier database does not restart a healthy container.
+	r.Get("/health/live", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	// Readiness: dependencies are reachable.
+	r.Get("/health/ready", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.Readiness == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "unchecked"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := cfg.Readiness(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable", "database": "unreachable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "reachable"})
 	})
 
 	// Instantiate handlers.
 	cohortH := NewCohortHandler(cfg.BankRepo, cfg.JobRepo)
 	scenarioH := NewScenarioHandler(cfg.ScenarioRepo, cfg.BankRepo, cfg.AuditRepo, cfg.Provider)
-	experimentH := NewExperimentHandler(cfg.ExperimentRepo, cfg.BankRepo, cfg.ScenarioRepo, cfg.CoverageRepo, cfg.EvidenceRepo)
+	experimentH := NewExperimentHandler(cfg.ExperimentRepo, cfg.BankRepo, cfg.ScenarioRepo, cfg.CoverageRepo, cfg.EvidenceRepo, cfg.CampaignRepo)
 	coverageH := NewCoverageHandler(cfg.CoverageRepo)
 	discoveryH := NewDiscoveryHandler(cfg.DiscoveryRepo, cfg.BankRepo)
 	auditH := NewAuditHandler(cfg.AuditRepo)
-	campaignH := NewCampaignHandler(cfg.ExperimentRepo, cfg.CoverageRepo)
+	campaignH := NewCampaignHandler(cfg.CampaignRepo, cfg.DiscoveryRepo)
 	regressionH := NewRegressionHandler(cfg.ExperimentRepo, cfg.BankRepo)
 	authH := NewAuthHandler(cfg.Credentials, cfg.Signer, cfg.AuditRepo)
 	usersH := NewUserHandler(cfg.UserAdmin, cfg.AuditRepo)
+	counterfactualH := NewCounterfactualHandler()
+	customerH := NewCustomerHandler(cfg.BankRepo)
+	reviewH := NewReviewHandler(cfg.ExperimentRepo, cfg.AuditRepo)
 
 	// /api/v1 — authentication + role-based authorization (AC-07, T-01).
 	//
@@ -103,9 +132,21 @@ func NewRouter(cfg RouterConfig) http.Handler {
 			r.Get("/experiments/{id}", experimentH.GetExperiment)
 			r.Get("/experiments/{id}/evidence", experimentH.GetEvidence)
 			r.Post("/experiments/{id}/replay", experimentH.ReplayExperiment)
+			r.Get("/experiments/{id}/review", reviewH.GetReview)
+			r.Post("/experiments/{id}/review", reviewH.CreateReview)
+
+			// Reviewer queue: completed experiments without a decision.
+			r.Get("/reviews/queue", reviewH.Queue)
 
 			// Coverage (AC-05).
 			r.Get("/coverage", coverageH.GetCoverage)
+
+			// Synthetic customer directory.
+			r.Get("/customers", customerH.List)
+
+			// Counterfactual validity checks (declared change, unchanged
+			// dimensions, dependent changes, control classification).
+			r.Post("/counterfactuals/validate", counterfactualH.Validate)
 
 			// Adaptive discovery: choose the next candidate with a persisted,
 			// explainable score. See docs/DECISIONS.md (DECISION-016).
@@ -117,6 +158,7 @@ func NewRouter(cfg RouterConfig) http.Handler {
 			r.Get("/campaigns", campaignH.ListCampaigns)
 			r.Post("/campaigns", campaignH.CreateCampaign)
 			r.Get("/campaigns/{id}", campaignH.GetCampaign)
+			r.Patch("/campaigns/{id}", campaignH.UpdateCampaign)
 			r.Get("/campaigns/{id}/coverage", campaignH.GetCampaignCoverage)
 			r.Get("/campaigns/{id}/benchmark", campaignH.GetCampaignBenchmark)
 

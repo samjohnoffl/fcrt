@@ -21,6 +21,7 @@ const (
 	EventExperimentStarted   EventType = "experiment_started"
 	EventExperimentCompleted EventType = "experiment_completed"
 	EventExperimentFailed    EventType = "experiment_failed"
+	EventExperimentReviewed  EventType = "experiment_reviewed"
 	EventCohortCreated       EventType = "cohort_created"
 	EventCohortLocked        EventType = "cohort_locked"
 	EventLoginSucceeded      EventType = "auth_login_succeeded"

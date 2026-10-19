@@ -1,6 +1,11 @@
 package payment
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"time"
+
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
 )
 
@@ -18,9 +23,12 @@ func Normalize(
 	toEntity bank.Entity,
 ) Message {
 	msg := Message{
-		MsgID:     NewMessageID(tx.ID),
-		UETR:      tx.ID, // reuse the tx UUID as the end-to-end reference
-		CreatedAt: tx.CreatedAt,
+		MsgID:                NewMessageID(tx.ID),
+		MessageFamily:        messageFamily(tx.TxType),
+		NormalizationVersion: NormalizationVersion,
+		SourceRecordHash:     SourceRecordHash(tx),
+		UETR:                 tx.ID, // reuse the tx UUID as the end-to-end reference
+		CreatedAt:            tx.CreatedAt,
 		InterbankSettlementAmount: Amount{
 			ValueCents: tx.AmountCents,
 			Currency:   tx.Currency,
@@ -34,6 +42,30 @@ func Normalize(
 		SourceTxID:   tx.ID,
 	}
 	return msg
+}
+
+// messageFamily maps the internal rail to the normalised message family.
+// Wires are modelled as MT103; ACH, crypto and cash use pacs.008.
+func messageFamily(t bank.TxType) string {
+	if t == bank.TxTypeWire {
+		return MessageFamilyMT103
+	}
+	return MessageFamilyPacs008
+}
+
+// SourceRecordHash returns a deterministic hash of the ledger fields that
+// define a payment. Attributes are excluded because they are an unordered map.
+//
+// The hash is the double-count guard: if the same transaction is normalised
+// from two views (e.g. debtor and creditor extracts), both messages carry the
+// same SourceRecordHash and Deduplicate keeps only one.
+func SourceRecordHash(tx bank.Transaction) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s|%s|%s|%s|%d|%s|%s|%s",
+		tx.ID, tx.CohortID, tx.FromAccountID, tx.ToAccountID,
+		tx.AmountCents, tx.Currency, tx.TxType,
+		tx.TxTimestamp.UTC().Format(time.RFC3339Nano))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // normalizeParty builds a Party from an account and its owning entity.

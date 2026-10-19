@@ -228,4 +228,48 @@ Decisions are numbered sequentially. Never delete; supersede with a new entry.
 - **The dead scorers were deleted**, including `cmd/worker`'s `ComputeAdaptiveScore` block, so there is no second, divergent formula.
 - **Benchmark is now derived, not simulated.** `internal/benchmark` reads the latest stored run for each of `random`, `gemini_only` and `adaptive` and computes yield, approval rate and mean components from those rows. It reports `insufficient_data` when a strategy has not been run, when any run selected fewer than 5 candidates, or when all strategies tie; in those cases it declares **no winner**. `GET /campaigns/{id}/benchmark` now returns `404 campaign_not_persisted` because campaigns have no table; the real endpoint is `GET /cohorts/{id}/benchmark`.
 **Evidence**: `go test ./...` passes (genome, discovery and benchmark have new unit tests). Live against the dev database: all three strategies returned `201` with persisted traces, and `GET /cohorts/{id}/benchmark` returned `insufficient_data=true` with the honest note rather than a fabricated winner — exactly the intended behaviour for a one-candidate pool.
-**Known gap (not fixed here)**: the AML simulator still implements 3 of the 8 control families and has no five-status outcome model; the three coverage maps, counterfactual validity classification, payment-layer event fields, bank relationship/institution entities, `/customers`, `/health/live|ready`, campaign persistence and the review-queue screen remain outstanding. They are recorded here so they are not mistaken for done.
+**Known gap (not fixed here)**: the AML simulator still implements 3 of the 8 control families and has no five-status outcome model; the three coverage maps, counterfactual validity classification, payment-layer event fields, bank relationship/institution entities, `/customers`, `/health/live|ready`, campaign persistence and the review-queue screen remain outstanding. They are recorded here so they are not mistaken for done. (Resolved by DECISION-017, except the bank relationship/institution graph.)
+
+---
+
+## DECISION-017 · Control Outcomes, Three Coverage Maps, Counterfactual Validation, Persisted Campaigns and Review Queue
+**Status**: decided
+**Impact**: `internal/aml/{types,config,evaluator}.go`, `internal/coverage`, `internal/counterfactual`, `internal/payment`, `internal/campaign`, `internal/experiment`, `internal/api/*`, `migrations/000011…000013`, `frontend/src/pages/{CoverageDashboard,ReviewQueue}.tsx`, `frontend/src/components/Layout.tsx`, `frontend/src/App.tsx`
+**Question**: DECISION-016 recorded several report requirements as unimplemented. Which of them can be made real without fabricating data, and how should the remainder be represented?
+**Options**:
+- A) Leave them as documented gaps
+- B) Implement the missing control families, outcome semantics, coverage maps, counterfactual checks, payment fields, campaign persistence and review workflow; leave only the synthetic relationship/institution graph as an explicit gap
+- C) Mock the missing pieces so the UI looks complete
+**Decision**: **Option B**.
+
+**Control simulator (8 families, five statuses)**
+- Added `velocity`, `counterparty_expansion`, `dormancy_activation`, `geographic_band` and `ownership_relationship` to the existing `structuring`, `layering` and `rapid_movement`. Each has a versioned threshold block in `ControlConfig`; `ControlVersion` is now `v0.2.0`, so old and new configurations are not silently compared.
+- `HarnessResult` now carries one `RuleOutcome` per family. The five statuses are exclusive: `triggered`, `not_triggered`, `not_applicable`, `inconclusive`, `failed`. A rule that is disabled is `not_applicable` with `rule_disabled`; a rule with no input is `not_applicable` with `no_events`; a dormancy rule without two events is `inconclusive` with `insufficient_history`; a panic or unknown rule is `failed`, never `not_triggered`.
+- Triggered outcomes retain rule ID, rule version (config hash), contributing event IDs, account/entity IDs, amount and currency, so the evidence can be traced to specific synthetic events.
+
+**Three coverage maps**
+- Migration `000011` adds `rule_outcome`, extends `rule_coverage` with per-status counters, and adds `outcome_coverage` (rule × status) and `scenario_coverage` (genome dimension × value). `GET /api/v1/coverage` returns all three.
+- Coverage is written from the five-status outcomes of both the baseline and variant runs. The old handler recorded every rule that appeared in *any* alert list as triggered, and the worker counted only triggers; both overstated coverage and were replaced.
+- Scenario coverage is recorded from the deterministic genome of the linked approved proposal. If no proposal is linked, no scenario row is written — the map stays honestly empty instead of inventing dimension values.
+
+**Counterfactual validity**
+- New `internal/counterfactual` compares a baseline and variant genome and returns: declared dimensions, every changed dimension, dependent changes with the dimension they derive from, violations, and a classification (`tightly_controlled`, `partially_controlled`, `exploratory`, `invalid`).
+- Pairs are rejected when a dimension changes without being declared or derived, when a declared dimension did not actually change, when no dimension is declared, or when schema versions differ. Dependencies are explicit (`transactions → network`, `geography → network`, `actors → ownership`, etc.).
+- `POST /api/v1/counterfactuals/validate` exposes this. The report is structural: it never claims that the declared change caused the outcome.
+
+**Payment intelligence**
+- `payment.Message` now records `message_family` (`pacs.008` / `mt103`), `normalization_version` (`v1.0.0`) and a deterministic `source_record_hash`. `Deduplicate` removes the same ledger record normalised twice before `AnalyzeBatch` scores a batch; messages with no identity are never dropped.
+
+**API and review workflow**
+- `GET /api/v1/customers` lists synthetic entities (optionally filtered by `cohort_id`).
+- `GET /health/live` never touches the database; `GET /health/ready` pings it and returns 503 when unreachable.
+- Campaigns are persisted (`migration 000012`): create/list/get/patch, a cohort link, a budget, status, and a control configuration. Experiments accept an optional `campaign_id`; the handler checks campaign status and budget before execution, rejects a cohort mismatch, and increments usage after a successful save.
+- `GET /campaigns/{id}/coverage` reports the campaign, its experiment count and budget, and states that the coverage maps are global rather than pretending to slice them. `GET /campaigns/{id}/benchmark` runs the honest cohort comparison when the campaign has a cohort.
+- Review decisions are persisted (`migration 000013`). `GET /reviews/queue` returns completed unreviewed pairs oldest-first; `POST /experiments/{id}/review` requires a decision and a rationale, records the reviewer from the session, writes an audit event, and returns `409` on a second review. The frontend adds a Review Queue screen with inline approve/reject/escalate forms.
+
+**Known gaps (still not implemented)**
+- The synthetic bank still has no separate relationship/institution entity graph. Ownership is represented by `account.entity_id`, and counterparty edges are derivable from transactions, but the report's `customer_relationships` / institution tables and cohort-neighbourhood completeness/exclusion records are not present. The UI and API do not claim otherwise.
+- Campaigns are persisted and budgeted, but the frontend has no campaign management screen, and coverage is not sliced per campaign at outcome-write time.
+- Counterfactual validation is exposed as a standalone API and is not yet attached to stored experiment pairs, because the experiment request does not carry a baseline genome.
+
+**Evidence**: `go test ./...` (295 test runs, including new outcome, counterfactual, coverage, campaign, payment and review tests) and the frontend suite (102 tests, including the three-map coverage view and the review workflow) pass. Migrations apply cleanly to version 13.

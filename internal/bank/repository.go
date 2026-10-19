@@ -401,6 +401,36 @@ func (r *Repository) ListEntities(ctx context.Context, cohortID uuid.UUID) ([]En
 	return entities, rows.Err()
 }
 
+// ListAllEntities returns every entity across all cohorts, newest first.
+// Used by the customer directory when no cohort filter is supplied.
+func (r *Repository) ListAllEntities(ctx context.Context) ([]Entity, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, cohort_id, entity_type, name, country_code, risk_score, attributes, created_at
+		FROM bank_entity
+		ORDER BY created_at DESC, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list all entities: %w", err)
+	}
+	defer rows.Close()
+
+	var entities []Entity
+	for rows.Next() {
+		var e Entity
+		var attrsJSON []byte
+		if err := rows.Scan(
+			&e.ID, &e.CohortID, &e.EntityType, &e.Name,
+			&e.CountryCode, &e.RiskScore, &attrsJSON, &e.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan entity: %w", err)
+		}
+		if err := json.Unmarshal(attrsJSON, &e.Attributes); err != nil {
+			return nil, fmt.Errorf("unmarshal entity attributes: %w", err)
+		}
+		entities = append(entities, e)
+	}
+	return entities, rows.Err()
+}
+
 // ─── Account queries ─────────────────────────────────────────────────────────
 
 // ListAccounts returns all accounts for a cohort, ordered by created_at, id.

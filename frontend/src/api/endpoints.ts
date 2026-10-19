@@ -6,6 +6,7 @@ import type {
   Campaign, CreateCampaignRequest, ComparisonResult, DiscoveryRun, BenchmarkStrategy,
   RegressionVerifyResponse, LoginResponse, Principal,
   AppUser, CreateUserRequest, UpdateUserRequest, AuditEvent,
+  ReviewDecision, ReviewDecisionValue, ReviewQueueItem,
 } from './types'
 
 /* ── Authentication ── */
@@ -90,6 +91,14 @@ export const discoveryApi = {
 export const campaignApi = {
   list:   ()                          => api.get<Campaign[]>('/campaigns'),
   create: (r: CreateCampaignRequest)  => api.post<Campaign>('/campaigns', r),
+}
+
+/* ── Reviews ── */
+export const reviewApi = {
+  queue: () => api.get<{ queue: ReviewQueueItem[]; count: number }>('/reviews/queue'),
+  get: (id: string) => api.get<ReviewDecision>(`/experiments/${id}/review`),
+  create: (id: string, decision: ReviewDecisionValue, rationale: string) =>
+    api.post<ReviewDecision>(`/experiments/${id}/review`, { decision, rationale }),
 }
 
 /* ── Regression Test Pack (PRODUCT_SPEC item 7) ── */

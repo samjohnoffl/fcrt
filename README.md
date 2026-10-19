@@ -70,9 +70,20 @@ experiment (id, cohort_id, scenario_proposal_id, control_version,
 experiment_run (id, experiment_id, variant CHECK(baseline|variant),
                 seed, alert_count, alert_rate, run_metadata JSONB)
 
--- Coverage heat-map (adaptive cohort selection)
+-- Coverage heat-map (adaptive cohort selection), three separate maps
 rule_coverage (rule_id PRIMARY KEY, trigger_count, last_triggered_at,
-               weight NUMERIC)            -- higher = less covered
+               weight NUMERIC, times_not_triggered, times_not_applicable,
+               times_inconclusive, times_failed, last_status)
+outcome_coverage (rule_id, status, times_seen)        -- rule × five-status cross-tab
+scenario_coverage (dimension, value, times_seen)      -- genome dimension × value
+
+-- Control outcomes (one row per control per run)
+rule_outcome (run_id, pair_id, rule_id, rule_version, status, reason_code,
+              event_ids UUID[], account_ids UUID[], entity_ids UUID[])
+
+-- Campaigns and reviewer decisions
+campaign (id, name, goal, cohort_id, budget, experiments_used, status)
+review_decision (pair_id UNIQUE, reviewer, decision, rationale)
 ```
 
 ---
@@ -315,7 +326,7 @@ Based on `docs/THREAT_MODEL.md` (STRIDE analysis):
 | **T-04** Prompt injection | Gemini output schema-validated before use; never executed or interpolated into SQL |
 | **T-10** Privilege escalation | Scenario approval requires `analyst`+; approver identity stored in DB row and audit log |
 | **AC-03.2** Approval gate | Experiments can only reference `status=approved` proposals |
-| **AC-05** Coverage | `rule_coverage` table tracks uncovered rules at max weight |
+| **AC-05** Coverage | Three maps: `rule_coverage` (control statuses), `outcome_coverage` (rule × status), `scenario_coverage` (genome dimension × value) |
 | **AC-06** Evidence | Evidence bundles include provenance hash, cohort seed, and honest limitation labels |
 | **Login audit** | Every login attempt (success/failure) is written to `audit_event` |
 | **Secret hygiene** | `.gitignore` excludes `.env`, `*.pem`, `*.p12`, `service-account*.json` |
@@ -412,19 +423,38 @@ candidates, or when the metrics tie.
 | GET | `/api/v1/experiments/{id}` | Get experiment + runs |
 | GET | `/api/v1/experiments/{id}/evidence` | Get persisted evidence bundle (AC-06); `?download=1` returns it as a JSON file |
 | POST | `/api/v1/experiments/{id}/replay` | Replay experiment (reproducibility) |
+| GET | `/api/v1/experiments/{id}/review` | Read the recorded reviewer decision |
+| POST | `/api/v1/experiments/{id}/review` | Record `approved` / `rejected` / `escalated` (rationale required) |
 
-### Coverage
+### Coverage (three maps)
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/v1/coverage` | Rule coverage summary (sorted by weight) |
+| GET | `/api/v1/coverage` | Control coverage + `outcome_coverage` (rule × status) + `scenario_coverage` (genome dimension × value) |
 
-### Campaigns (grouping is not persisted yet)
+### Customers
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/v1/campaigns` | List campaigns (always empty — no table yet) |
-| POST | `/api/v1/campaigns` | Echo a campaign object (not stored) |
-| GET | `/api/v1/campaigns/{id}/coverage` | Placeholder |
-| GET | `/api/v1/campaigns/{id}/benchmark` | `404 campaign_not_persisted` — use `/cohorts/{id}/benchmark` |
+| GET | `/api/v1/customers` | List synthetic customers (entities); optional `?cohort_id=` |
+
+### Counterfactual validation
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/v1/counterfactuals/validate` | Compare baseline/variant genomes; returns declared changes, dependent changes, violations and `tightly_controlled` / `partially_controlled` / `exploratory` / `invalid` |
+
+### Campaigns (persisted, budget-enforced)
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/campaigns` | List persisted campaigns |
+| POST | `/api/v1/campaigns` | Create a campaign (name, budget, optional cohort and control config) |
+| GET | `/api/v1/campaigns/{id}` | Get a campaign |
+| PATCH | `/api/v1/campaigns/{id}` | Update description, budget or status |
+| GET | `/api/v1/campaigns/{id}/coverage` | Campaign metadata + experiment count; states that coverage maps are global |
+| GET | `/api/v1/campaigns/{id}/benchmark` | Cohort benchmark for the campaign's cohort (honest `insufficient_data` when runs are missing) |
+
+### Reviews
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/reviews/queue` | Completed experiments with no decision, oldest first |
 
 ### Regression Test Pack (PRODUCT_SPEC item 7)
 | Method | Path | Description |
@@ -441,6 +471,8 @@ candidates, or when the metrics tie.
 | Method | Path | Description |
 |---|---|---|
 | GET | `/healthz` | Health probe (unauthenticated) |
+| GET | `/health/live` | Liveness probe; does not touch the database |
+| GET | `/health/ready` | Readiness probe; pings the database, `503` when unreachable |
 
 ### Alert schema (PRODUCT_SPEC item 3)
 

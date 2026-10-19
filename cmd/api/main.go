@@ -37,6 +37,7 @@ import (
 	"github.com/yourorg/financial-crime-red-team/internal/audit"
 	"github.com/yourorg/financial-crime-red-team/internal/auth"
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
+	"github.com/yourorg/financial-crime-red-team/internal/campaign"
 	"github.com/yourorg/financial-crime-red-team/internal/coverage"
 	"github.com/yourorg/financial-crime-red-team/internal/discovery"
 	"github.com/yourorg/financial-crime-red-team/internal/evidence"
@@ -89,6 +90,7 @@ func main() {
 	jobRepo := job.NewRepository(pool)
 	evidenceRepo := evidence.NewRepository(pool)
 	discoveryRepo := discovery.NewRepository(pool)
+	campaignRepo := campaign.NewRepository(pool)
 
 	// ── Authentication ───────────────────────────────────────────────────────
 	var (
@@ -208,8 +210,10 @@ func main() {
 		JobRepo:        jobRepo,
 		EvidenceRepo:   evidenceRepo,
 		DiscoveryRepo:  discoveryRepo,
+		CampaignRepo:   campaignRepo,
 		Provider:       provider,
 		CORSOrigins:    corsOrigins,
+		Readiness:      pool.Ping,
 	})
 
 	// ── HTTP server ──────────────────────────────────────────────────────────

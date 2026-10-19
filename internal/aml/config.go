@@ -18,7 +18,7 @@ import (
 
 // ControlVersion is the semantic version of the AML control config schema.
 // Bump this when the schema of ControlConfig itself changes (not just thresholds).
-const ControlVersion = "v0.1.0"
+const ControlVersion = "v0.2.0"
 
 // StructuringConfig holds thresholds for the structuring detection rule.
 // Structuring: multiple transactions just below a reporting threshold to
@@ -61,6 +61,44 @@ type RapidMovementConfig struct {
 // Evaluator skips any rule whose ID is not in this list.
 type EnabledRules []RuleID
 
+// VelocityConfig holds thresholds for the velocity rule.
+// Velocity: the count or value of an account's activity rises materially
+// between a baseline window and the following evaluation window.
+type VelocityConfig struct {
+	WindowHours         int `json:"window_hours"`
+	MinCountIncrease    int `json:"min_count_increase"`
+	MinValueIncreasePct int `json:"min_value_increase_pct"`
+}
+
+// CounterpartyExpansionConfig holds thresholds for the counterparty-expansion
+// rule: the number of distinct counterparties grows materially between the
+// baseline window and the evaluation window.
+type CounterpartyExpansionConfig struct {
+	WindowHours          int `json:"window_hours"`
+	MinNewCounterparties int `json:"min_new_counterparties"`
+}
+
+// DormancyConfig holds thresholds for the dormancy-activation rule: an account
+// with no activity for DormantDays resumes activity above a minimum amount.
+type DormancyConfig struct {
+	DormantDays          int   `json:"dormant_days"`
+	MinResumeAmountCents int64 `json:"min_resume_amount_cents"`
+}
+
+// GeographicConfig holds the high-risk country band for the geographic rule.
+type GeographicConfig struct {
+	HighRiskCountryCodes []string `json:"high_risk_country_codes"`
+	MinTransactions      int      `json:"min_transactions"`
+}
+
+// OwnershipConfig holds thresholds for the ownership-relationship rule:
+// several accounts controlled by the same entity move funds within a window.
+type OwnershipConfig struct {
+	MinLinkedAccounts int `json:"min_linked_accounts"`
+	MinTransactions   int `json:"min_transactions"`
+	WindowHours       int `json:"window_hours"`
+}
+
 // ControlConfig is the complete, versioned AML rule configuration for one
 // experiment pair. Both the baseline and variant MUST use the same
 // ControlConfig (verified via ConfigHash equality).
@@ -75,6 +113,16 @@ type ControlConfig struct {
 	Layering LayeringConfig `json:"layering"`
 	// RapidMovement holds rapid-movement rule parameters.
 	RapidMovement RapidMovementConfig `json:"rapid_movement"`
+	// Velocity holds velocity rule parameters.
+	Velocity VelocityConfig `json:"velocity"`
+	// CounterpartyExpansion holds counterparty-expansion rule parameters.
+	CounterpartyExpansion CounterpartyExpansionConfig `json:"counterparty_expansion"`
+	// Dormancy holds dormancy-activation rule parameters.
+	Dormancy DormancyConfig `json:"dormancy"`
+	// Geographic holds geographic-band rule parameters.
+	Geographic GeographicConfig `json:"geographic"`
+	// Ownership holds ownership-relationship rule parameters.
+	Ownership OwnershipConfig `json:"ownership"`
 	// ConfigHash is SHA-256 of the canonical JSON (with ConfigHash="").
 	// Populated by NewControlConfig; do not set manually.
 	ConfigHash string `json:"config_hash"`
@@ -85,7 +133,7 @@ type ControlConfig struct {
 func DefaultControlConfig() *ControlConfig {
 	c := &ControlConfig{
 		ControlVersion: ControlVersion,
-		EnabledRules:   EnabledRules{RuleStructuring, RuleLayering, RuleRapidMovement},
+		EnabledRules:   append(EnabledRules{}, AllRules...),
 		Structuring: StructuringConfig{
 			ReportingThresholdCents: 1_000_000, // $10,000.00
 			WindowHours:             24,
@@ -101,11 +149,40 @@ func DefaultControlConfig() *ControlConfig {
 			DebitRatioPct:  80,
 		},
 	}
+	applyExtendedDefaults(c)
 	if err := c.computeHash(); err != nil {
 		// Static config: this should never fail.
 		panic(fmt.Sprintf("aml: failed to hash default config: %v", err))
 	}
 	return c
+}
+
+// applyExtendedDefaults fills the five families added in ControlVersion
+// v0.2.0. Keeping them in one function means NewControlConfig (the 4-argument
+// constructor used by older callers) still produces a complete config.
+func applyExtendedDefaults(c *ControlConfig) {
+	c.Velocity = VelocityConfig{
+		WindowHours:         24,
+		MinCountIncrease:    3,
+		MinValueIncreasePct: 100,
+	}
+	c.CounterpartyExpansion = CounterpartyExpansionConfig{
+		WindowHours:          72,
+		MinNewCounterparties: 3,
+	}
+	c.Dormancy = DormancyConfig{
+		DormantDays:          30,
+		MinResumeAmountCents: 100_000, // $1,000.00
+	}
+	c.Geographic = GeographicConfig{
+		HighRiskCountryCodes: []string{"AF", "BY", "KY", "MM", "NG", "PA", "RU", "SY"},
+		MinTransactions:      2,
+	}
+	c.Ownership = OwnershipConfig{
+		MinLinkedAccounts: 2,
+		MinTransactions:   3,
+		WindowHours:       24,
+	}
 }
 
 // NewControlConfig constructs a ControlConfig from the given parameters,
@@ -123,6 +200,7 @@ func NewControlConfig(
 		Layering:       layering,
 		RapidMovement:  rapidMovement,
 	}
+	applyExtendedDefaults(c)
 	if err := c.computeHash(); err != nil {
 		return nil, err
 	}
@@ -178,8 +256,38 @@ func (c *ControlConfig) Validate() error {
 	if c.RapidMovement.DebitRatioPct < 0 || c.RapidMovement.DebitRatioPct > 100 {
 		return fmt.Errorf("aml: rapid_movement.debit_ratio_pct must be in [0,100]")
 	}
+	if c.Velocity.WindowHours <= 0 || c.Velocity.MinCountIncrease <= 0 || c.Velocity.MinValueIncreasePct < 0 {
+		return fmt.Errorf("aml: velocity parameters must be positive (window_hours, min_count_increase, min_value_increase_pct)")
+	}
+	if c.CounterpartyExpansion.WindowHours <= 0 || c.CounterpartyExpansion.MinNewCounterparties <= 0 {
+		return fmt.Errorf("aml: counterparty_expansion parameters must be positive")
+	}
+	if c.Dormancy.DormantDays <= 0 || c.Dormancy.MinResumeAmountCents < 0 {
+		return fmt.Errorf("aml: dormancy parameters are invalid")
+	}
+	if c.Geographic.MinTransactions <= 0 {
+		return fmt.Errorf("aml: geographic.min_transactions must be > 0")
+	}
+	if c.Ownership.MinLinkedAccounts <= 1 || c.Ownership.MinTransactions <= 0 || c.Ownership.WindowHours <= 0 {
+		return fmt.Errorf("aml: ownership parameters are invalid")
+	}
+	for _, id := range c.EnabledRules {
+		if !IsKnownRule(id) {
+			return fmt.Errorf("aml: unknown rule id %q", id)
+		}
+	}
 	if c.ConfigHash == "" {
 		return fmt.Errorf("aml: config_hash is empty (use NewControlConfig or DefaultControlConfig)")
 	}
 	return nil
+}
+
+// IsKnownRule reports whether id is one of the implemented control families.
+func IsKnownRule(id RuleID) bool {
+	for _, r := range AllRules {
+		if r == id {
+			return true
+		}
+	}
+	return false
 }

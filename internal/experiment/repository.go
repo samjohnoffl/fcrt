@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yourorg/financial-crime-red-team/internal/aml"
@@ -62,11 +63,12 @@ func insertPair(ctx context.Context, tx pgx.Tx, p Pair) error {
 	_, err = tx.Exec(ctx, `
 		INSERT INTO experiment_pair
 		  (id, name, cohort_id, control_hash, manifest_hash, seed,
-		   declared_change, mutation_type, mutation_spec, scenario_proposal_id, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		   declared_change, mutation_type, mutation_spec, scenario_proposal_id,
+		   campaign_id, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		p.ID, p.Name, p.CohortID, p.ControlHash, p.ManifestHash,
 		p.Seed, p.DeclaredChange, string(p.MutationType), specJSON,
-		p.ScenarioProposalID, string(p.Status),
+		p.ScenarioProposalID, p.CampaignID, string(p.Status),
 	)
 	return wrapErr("insert experiment_pair", err)
 }
@@ -92,7 +94,33 @@ func insertRun(ctx context.Context, tx pgx.Tx, r RunResult) error {
 		r.ID, r.PairID, string(r.RunType), r.ControlHash, r.ManifestHash,
 		r.AlertCount, summaryJSON, alertsJSON, r.StartedAt, completedAt,
 	)
-	return wrapErr("insert experiment_pair_run", err)
+	if err != nil {
+		return wrapErr("insert experiment_pair_run", err)
+	}
+
+	for _, oc := range r.Outcomes {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO rule_outcome
+			  (id, run_id, pair_id, rule_id, rule_version, status, reason_code,
+			   event_ids, account_ids, entity_ids, amount_cents, currency, detail)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+			uuid.New(), r.ID, r.PairID, string(oc.RuleID), oc.RuleVersion,
+			string(oc.Status), string(oc.ReasonCode),
+			nonNilIDs(oc.EventIDs), nonNilIDs(oc.AccountIDs), nonNilIDs(oc.EntityIDs),
+			oc.AmountCents, oc.Currency, oc.Detail,
+		); err != nil {
+			return wrapErr("insert rule_outcome", err)
+		}
+	}
+	return nil
+}
+
+// nonNilIDs ensures pgx receives an empty array rather than NULL for UUID[].
+func nonNilIDs(ids []uuid.UUID) []uuid.UUID {
+	if ids == nil {
+		return []uuid.UUID{}
+	}
+	return ids
 }
 
 func insertOutcome(ctx context.Context, tx pgx.Tx, o Outcome) error {
@@ -116,7 +144,7 @@ func (r *Repository) GetPair(ctx context.Context, id uuid.UUID) (Pair, error) {
 	const q = `
 		SELECT id, name, cohort_id, control_hash, manifest_hash, seed,
 		       declared_change, mutation_type, mutation_spec, status, error_msg,
-		       scenario_proposal_id, created_at, updated_at
+		       scenario_proposal_id, campaign_id, created_at, updated_at
 		FROM experiment_pair WHERE id = $1`
 	row := r.pool.QueryRow(ctx, q, id)
 	return scanPair(row)
@@ -129,7 +157,7 @@ func scanPair(row pgx.Row) (Pair, error) {
 	err := row.Scan(
 		&p.ID, &p.Name, &p.CohortID, &p.ControlHash, &p.ManifestHash, &p.Seed,
 		&p.DeclaredChange, &p.MutationType, &specJSON, &p.Status, &errMsg,
-		&p.ScenarioProposalID, &p.CreatedAt, &p.UpdatedAt,
+		&p.ScenarioProposalID, &p.CampaignID, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -206,9 +234,125 @@ func (r *Repository) ListRunsForPair(ctx context.Context, pairID uuid.UUID) ([]R
 		if err := json.Unmarshal(summaryJSON, &rr.AlertSummary); err != nil {
 			return nil, fmt.Errorf("unmarshal alert_summary: %w", err)
 		}
+		outcomes, err := r.loadOutcomes(ctx, rr.ID)
+		if err != nil {
+			return nil, err
+		}
+		rr.Outcomes = outcomes
 		runs = append(runs, rr)
 	}
 	return runs, rows.Err()
+}
+
+// loadOutcomes reads the five-status outcomes persisted for one run, so the
+// experiment detail endpoint returns the same evidence the coverage maps were
+// built from.
+func (r *Repository) loadOutcomes(ctx context.Context, runID uuid.UUID) ([]aml.RuleOutcome, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT rule_id, rule_version, status, reason_code,
+		       event_ids, account_ids, entity_ids,
+		       amount_cents, currency, detail
+		FROM rule_outcome
+		WHERE run_id = $1
+		ORDER BY rule_id`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("experiment repo: load outcomes: %w", err)
+	}
+	defer rows.Close()
+
+	var outcomes []aml.RuleOutcome
+	for rows.Next() {
+		var oc aml.RuleOutcome
+		if err := rows.Scan(
+			&oc.RuleID, &oc.RuleVersion, &oc.Status, &oc.ReasonCode,
+			&oc.EventIDs, &oc.AccountIDs, &oc.EntityIDs,
+			&oc.AmountCents, &oc.Currency, &oc.Detail,
+		); err != nil {
+			return nil, fmt.Errorf("experiment repo: scan outcome: %w", err)
+		}
+		outcomes = append(outcomes, oc)
+	}
+	return outcomes, rows.Err()
+}
+
+// ─── Review decisions ─────────────────────────────────────────────────────────
+
+// SaveReview records a reviewer decision. A pair can be reviewed once; a second
+// attempt returns ErrAlreadyReviewed rather than silently overwriting history.
+func (r *Repository) SaveReview(ctx context.Context, d ReviewDecision) (ReviewDecision, error) {
+	if d.ID == uuid.Nil {
+		d.ID = uuid.New()
+	}
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO review_decision (id, pair_id, reviewer, decision, rationale)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, pair_id, reviewer, decision, rationale, created_at`,
+		d.ID, d.PairID, d.Reviewer, string(d.Decision), d.Rationale,
+	).Scan(&d.ID, &d.PairID, &d.Reviewer, &d.Decision, &d.Rationale, &d.CreatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ReviewDecision{}, ErrAlreadyReviewed
+		}
+		return ReviewDecision{}, fmt.Errorf("experiment repo: save review: %w", err)
+	}
+	return d, nil
+}
+
+// GetReview returns the decision for a pair, or a wrapped pgx.ErrNoRows.
+func (r *Repository) GetReview(ctx context.Context, pairID uuid.UUID) (ReviewDecision, error) {
+	var d ReviewDecision
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, pair_id, reviewer, decision, rationale, created_at
+		FROM review_decision WHERE pair_id = $1`, pairID).
+		Scan(&d.ID, &d.PairID, &d.Reviewer, &d.Decision, &d.Rationale, &d.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ReviewDecision{}, fmt.Errorf("review not found for pair %s: %w", pairID, err)
+		}
+		return ReviewDecision{}, fmt.Errorf("experiment repo: get review: %w", err)
+	}
+	return d, nil
+}
+
+// ListReviewQueue returns completed pairs that have no review decision yet,
+// oldest first (the longest-waiting experiment is reviewed first).
+func (r *Repository) ListReviewQueue(ctx context.Context, limit int) ([]PairSummary, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	summaries, err := r.ListPairSummaries(ctx, 1000)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := r.pool.Query(ctx, `SELECT pair_id FROM review_decision`)
+	if err != nil {
+		return nil, fmt.Errorf("experiment repo: list reviewed pairs: %w", err)
+	}
+	defer rows.Close()
+	reviewed := make(map[uuid.UUID]bool)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("experiment repo: scan reviewed pair: %w", err)
+		}
+		reviewed[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]PairSummary, 0, limit)
+	// ListPairSummaries is newest-first; walk backwards so the queue is oldest-first.
+	for i := len(summaries) - 1; i >= 0 && len(out) < limit; i-- {
+		s := summaries[i]
+		if s.Pair.Status != StatusCompleted || reviewed[s.Pair.ID] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

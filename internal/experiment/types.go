@@ -99,6 +99,8 @@ type PairSpec struct {
 	// Nil for manually authored experiments. The adaptive loop uses this link
 	// to avoid proposing behaviour that has already been tested.
 	ScenarioProposalID *uuid.UUID
+	// CampaignID links the pair to a campaign for budget accounting.
+	CampaignID *uuid.UUID
 }
 
 // Validate returns an error if the spec is incomplete or contradictory.
@@ -145,8 +147,11 @@ type RunResult struct {
 	AlertCount   int                `json:"alert_count"`
 	AlertSummary map[aml.RuleID]int `json:"alert_summary"`
 	RawAlerts    []aml.Alert        `json:"raw_alerts,omitempty"`
-	StartedAt    time.Time          `json:"started_at"`
-	CompletedAt  time.Time          `json:"completed_at"`
+	// Outcomes is the five-status result of every control family, including
+	// controls that did not trigger or could not be evaluated.
+	Outcomes    []aml.RuleOutcome `json:"outcomes,omitempty"`
+	StartedAt   time.Time         `json:"started_at"`
+	CompletedAt time.Time         `json:"completed_at"`
 }
 
 // RunType distinguishes a baseline from a variant run.
@@ -156,6 +161,40 @@ const (
 	RunTypeBaseline RunType = "baseline"
 	RunTypeVariant  RunType = "variant"
 )
+
+// ─── Review decisions ─────────────────────────────────────────────────────────
+
+// ReviewDecisionValue is the reviewer's verdict on a completed experiment.
+type ReviewDecisionValue string
+
+const (
+	ReviewApproved  ReviewDecisionValue = "approved"
+	ReviewRejected  ReviewDecisionValue = "rejected"
+	ReviewEscalated ReviewDecisionValue = "escalated"
+)
+
+// Valid reports whether v is a known decision.
+func (v ReviewDecisionValue) Valid() bool {
+	switch v {
+	case ReviewApproved, ReviewRejected, ReviewEscalated:
+		return true
+	default:
+		return false
+	}
+}
+
+// ReviewDecision is one reviewer's recorded verdict on a pair.
+type ReviewDecision struct {
+	ID        uuid.UUID           `json:"id"`
+	PairID    uuid.UUID           `json:"pair_id"`
+	Reviewer  string              `json:"reviewer"`
+	Decision  ReviewDecisionValue `json:"decision"`
+	Rationale string              `json:"rationale"`
+	CreatedAt time.Time           `json:"created_at"`
+}
+
+// ErrAlreadyReviewed is returned when a pair already has a decision.
+var ErrAlreadyReviewed = errors.New("experiment pair already reviewed")
 
 // ─── Outcome ──────────────────────────────────────────────────────────────────
 
@@ -188,10 +227,12 @@ type Pair struct {
 	MutationSpec   map[string]any `json:"mutation_spec"` // any: open-schema blob per AGENTS.md rule
 	// ScenarioProposalID is the proposal this pair was executed from, if any.
 	ScenarioProposalID *uuid.UUID `json:"scenario_proposal_id,omitempty"`
-	Status             Status     `json:"status"`
-	ErrorMsg           string     `json:"error_msg,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	// CampaignID links the pair to a persisted campaign, when one was supplied.
+	CampaignID *uuid.UUID `json:"campaign_id,omitempty"`
+	Status     Status     `json:"status"`
+	ErrorMsg   string     `json:"error_msg,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 // ─── Sentinel errors ──────────────────────────────────────────────────────────

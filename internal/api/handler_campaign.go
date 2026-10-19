@@ -1,32 +1,37 @@
 // Package api — handler_campaign.go
 //
 // HTTP handlers for /api/v1/campaigns.
-// Campaigns organize experiments under a shared budget and goal.
+//
+// Campaigns are persisted: a campaign names a cohort, fixes a control
+// configuration and caps the number of experiments. Budget enforcement happens
+// in CreateExperiment, not here, so the check and the insert use the same
+// request path.
 package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/yourorg/financial-crime-red-team/internal/aml"
-	"github.com/yourorg/financial-crime-red-team/internal/coverage"
-	"github.com/yourorg/financial-crime-red-team/internal/experiment"
+	"github.com/yourorg/financial-crime-red-team/internal/benchmark"
+	"github.com/yourorg/financial-crime-red-team/internal/campaign"
+	"github.com/yourorg/financial-crime-red-team/internal/discovery"
 )
 
 // CampaignHandler handles campaign endpoints.
 type CampaignHandler struct {
-	expRepo      *experiment.Repository
-	coverageRepo *coverage.Repository
+	repo          *campaign.Repository
+	discoveryRepo *discovery.Repository
 }
 
 // NewCampaignHandler creates a CampaignHandler.
-func NewCampaignHandler(expRepo *experiment.Repository, coverageRepo *coverage.Repository) *CampaignHandler {
-	return &CampaignHandler{expRepo: expRepo, coverageRepo: coverageRepo}
+func NewCampaignHandler(repo *campaign.Repository, discoveryRepo *discovery.Repository) *CampaignHandler {
+	return &CampaignHandler{repo: repo, discoveryRepo: discoveryRepo}
 }
 
 // RegisterCampaignRoutes registers campaign endpoints on the router.
@@ -34,44 +39,24 @@ func (h *CampaignHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/campaigns", h.ListCampaigns)
 	r.Post("/campaigns", h.CreateCampaign)
 	r.Get("/campaigns/{id}", h.GetCampaign)
+	r.Patch("/campaigns/{id}", h.UpdateCampaign)
 	r.Get("/campaigns/{id}/coverage", h.GetCampaignCoverage)
 	r.Get("/campaigns/{id}/benchmark", h.GetCampaignBenchmark)
-}
-
-// ─── Types ─────────────────────────────────────────────────────────────────────
-
-type campaignStatus string
-
-const (
-	CampaignStatusActive    campaignStatus = "active"
-	CampaignStatusCompleted campaignStatus = "completed"
-	CampaignStatusPaused    campaignStatus = "paused"
-)
-
-// Campaign is a high-level grouping of experiments under a shared goal.
-type Campaign struct {
-	ID              uuid.UUID          `json:"id"`
-	Name            string             `json:"name"`
-	Description     string             `json:"description"`
-	Budget          int                `json:"budget"` // max experiments
-	ExperimentsUsed int                `json:"experiments_used"`
-	Status          campaignStatus     `json:"status"`
-	ControlConfig   *aml.ControlConfig `json:"control_config,omitempty"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
 type createCampaignRequest struct {
 	Name          string             `json:"name"`
 	Description   string             `json:"description"`
+	Goal          string             `json:"goal"`
+	CohortID      *uuid.UUID         `json:"cohort_id,omitempty"`
 	Budget        int                `json:"budget"`
 	ControlConfig *aml.ControlConfig `json:"control_config,omitempty"`
 }
 
 type updateCampaignRequest struct {
-	Description *string         `json:"description"`
-	Budget      *int            `json:"budget"`
-	Status      *campaignStatus `json:"status"`
+	Description *string          `json:"description"`
+	Budget      *int             `json:"budget"`
+	Status      *campaign.Status `json:"status"`
 }
 
 // ─── POST /api/v1/campaigns ────────────────────────────────────────────────────
@@ -91,84 +76,166 @@ func (h *CampaignHandler) CreateCampaign(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.ControlConfig == nil {
-		// Use default AML config
-		cfg := aml.DefaultControlConfig()
-		req.ControlConfig = cfg
-	} else {
-		if err := req.ControlConfig.Validate(); err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "validation_error", "invalid control config: "+err.Error())
-			return
-		}
+		req.ControlConfig = aml.DefaultControlConfig()
+	} else if err := req.ControlConfig.Validate(); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", "invalid control config: "+err.Error())
+		return
 	}
 
-	// In a full implementation, we'd persist this to a campaigns table.
-	// For now, return a mock campaign with the request data.
-	campaign := Campaign{
-		ID:              uuid.New(),
-		Name:            req.Name,
-		Description:     req.Description,
-		Budget:          req.Budget,
-		ExperimentsUsed: 0,
-		Status:          CampaignStatusActive,
-		ControlConfig:   req.ControlConfig,
-		CreatedAt:       time.Now().UTC(),
-		UpdatedAt:       time.Now().UTC(),
+	created, err := h.repo.Create(r.Context(), campaign.Campaign{
+		Name:          req.Name,
+		Description:   req.Description,
+		Goal:          req.Goal,
+		CohortID:      req.CohortID,
+		Budget:        req.Budget,
+		Status:        campaign.StatusActive,
+		ControlConfig: req.ControlConfig,
+	})
+	if err != nil {
+		slog.Error("create campaign", "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to create campaign")
+		return
 	}
-
-	slog.Info("campaign created", "campaign_id", campaign.ID, "name", campaign.Name)
-	writeJSON(w, http.StatusCreated, campaign)
+	slog.Info("campaign created", "campaign_id", created.ID, "name", created.Name)
+	writeJSON(w, http.StatusCreated, created)
 }
 
 // ─── GET /api/v1/campaigns ────────────────────────────────────────────────────
 
 func (h *CampaignHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
-	// In a full implementation, query from campaigns table.
-	// For now, return empty list.
-	writeJSON(w, http.StatusOK, []Campaign{})
+	campaigns, err := h.repo.List(r.Context())
+	if err != nil {
+		slog.Error("list campaigns", "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to list campaigns")
+		return
+	}
+	writeJSON(w, http.StatusOK, campaigns)
 }
 
 // ─── GET /api/v1/campaigns/{id} ────────────────────────────────────────────────
 
 func (h *CampaignHandler) GetCampaign(w http.ResponseWriter, r *http.Request) {
-	_, ok := parseUUID(w, chi.URLParam(r, "id"))
+	id, ok := parseUUID(w, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
-	// In a full implementation, query from campaigns table.
-	writeError(w, http.StatusNotFound, "not_found", "Campaign not found")
+	c, err := h.repo.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, campaign.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Campaign not found")
+			return
+		}
+		slog.Error("get campaign", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to get campaign")
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+// ─── PATCH /api/v1/campaigns/{id} ──────────────────────────────────────────────
+
+func (h *CampaignHandler) UpdateCampaign(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUUID(w, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	var req updateCampaignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON")
+		return
+	}
+	if req.Budget != nil && *req.Budget <= 0 {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", "budget must be positive")
+		return
+	}
+	if req.Status != nil && !req.Status.Valid() {
+		writeError(w, http.StatusUnprocessableEntity, "validation_error", "unknown campaign status")
+		return
+	}
+	c, err := h.repo.Update(r.Context(), id, req.Description, req.Budget, req.Status)
+	if err != nil {
+		if errors.Is(err, campaign.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Campaign not found")
+			return
+		}
+		slog.Error("update campaign", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to update campaign")
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }
 
 // ─── GET /api/v1/campaigns/{id}/coverage ───────────────────────────────────────
 
+// GetCampaignCoverage returns the campaign record and its experiment count.
+// Coverage maps themselves are global (rule_coverage, outcome_coverage,
+// scenario_coverage); this endpoint does not pretend to slice them per
+// campaign, because outcomes are not tagged with a campaign at write time.
 func (h *CampaignHandler) GetCampaignCoverage(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUUID(w, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
-	// In a full implementation, aggregate coverage from all experiments in campaign.
+	c, err := h.repo.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, campaign.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Campaign not found")
+			return
+		}
+		slog.Error("get campaign coverage", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to get campaign")
+		return
+	}
+	used, err := h.repo.CountExperiments(r.Context(), id)
+	if err != nil {
+		slog.Error("count campaign experiments", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to count campaign experiments")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"campaign_id": id,
-		"coverage": map[string]any{
-			"scenario": map[string]any{},
-			"control":  map[string]any{},
-			"outcome":  map[string]any{},
-		},
-		"note": "Full implementation requires campaign-experiment linkage",
+		"campaign_id":       c.ID,
+		"cohort_id":         c.CohortID,
+		"experiments":       used,
+		"budget":            c.Budget,
+		"experiments_used":  c.ExperimentsUsed,
+		"control_config":    c.ControlConfig,
+		"coverage_scope":    "global",
+		"coverage_endpoint": "/api/v1/coverage",
+		"note": "The three coverage maps are global; campaign-level slicing is not " +
+			"recorded at outcome-write time.",
 	})
 }
 
 // ─── GET /api/v1/campaigns/{id}/benchmark ──────────────────────────────────────
 
-// GetCampaignBenchmark is retained as an explicit, honest failure.
-//
-// Campaigns are not persisted (see handler_campaign.go CreateCampaign), so a
-// campaign ID cannot be resolved to a cohort or to stored runs. Returning a
-// made-up comparison here was the old behaviour and is deliberately removed.
-// Use GET /api/v1/cohorts/{id}/benchmark instead.
+// GetCampaignBenchmark compares strategies for the campaign's cohort using
+// stored discovery runs. It returns insufficient_data honestly rather than
+// inventing a winner when runs are missing.
 func (h *CampaignHandler) GetCampaignBenchmark(w http.ResponseWriter, r *http.Request) {
-	if _, ok := parseUUID(w, chi.URLParam(r, "id")); !ok {
+	id, ok := parseUUID(w, chi.URLParam(r, "id"))
+	if !ok {
 		return
 	}
-	writeError(w, http.StatusNotFound, "campaign_not_persisted",
-		"Campaigns are not persisted; use GET /api/v1/cohorts/{id}/benchmark with a real cohort ID")
+	c, err := h.repo.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, campaign.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "Campaign not found")
+			return
+		}
+		slog.Error("get campaign for benchmark", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "db_error", "Failed to get campaign")
+		return
+	}
+	if c.CohortID == nil {
+		writeError(w, http.StatusUnprocessableEntity, "campaign_has_no_cohort",
+			"Campaign has no cohort_id; a benchmark needs stored runs for a cohort")
+		return
+	}
+	result, err := benchmark.RunComparison(r.Context(), h.discoveryRepo, *c.CohortID)
+	if err != nil {
+		slog.Error("campaign benchmark", "campaign_id", id, "cohort_id", *c.CohortID, "err", err)
+		writeError(w, http.StatusInternalServerError, "benchmark_failed", "Failed to compute benchmark")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

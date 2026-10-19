@@ -8,7 +8,7 @@ import { authApi } from '../api/endpoints'
 
 type IconName =
   | 'dashboard' | 'discovery' | 'cohorts' | 'scenarios' | 'experiments'
-  | 'coverage' | 'benchmark' | 'users' | 'audit'
+  | 'coverage' | 'benchmark' | 'reviews' | 'users' | 'audit'
 
 const SVG = {
   fill: 'none',
@@ -65,6 +65,12 @@ const ICONS: Record<IconName, JSX.Element> = {
       <rect x="15.9" y="14" width="3.6" height="3.5" rx="1" />
     </svg>
   ),
+  reviews: (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...SVG}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="m8.2 12.2 2.5 2.5 5-5" />
+    </svg>
+  ),
   users: (
     <svg viewBox="0 0 24 24" width="16" height="16" {...SVG}>
       <circle cx="12" cy="8" r="3.6" />
@@ -91,6 +97,7 @@ const WORKSPACE_NAV: { to: string; icon: IconName; label: string }[] = [
   { to: '/cohorts',     icon: 'cohorts',     label: 'Cohorts' },
   { to: '/scenarios',   icon: 'scenarios',   label: 'Scenarios' },
   { to: '/experiments', icon: 'experiments', label: 'Experiments' },
+  { to: '/reviews',     icon: 'reviews',     label: 'Review Queue' },
   { to: '/coverage',    icon: 'coverage',    label: 'Coverage' },
   { to: '/discovery',   icon: 'discovery',   label: 'Discovery' },
   { to: '/benchmark',   icon: 'benchmark',   label: 'Benchmark Lab' },

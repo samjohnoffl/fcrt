@@ -25,9 +25,11 @@ import (
 
 	"github.com/yourorg/financial-crime-red-team/internal/aml"
 	"github.com/yourorg/financial-crime-red-team/internal/bank"
+	"github.com/yourorg/financial-crime-red-team/internal/campaign"
 	"github.com/yourorg/financial-crime-red-team/internal/coverage"
 	"github.com/yourorg/financial-crime-red-team/internal/evidence"
 	"github.com/yourorg/financial-crime-red-team/internal/experiment"
+	"github.com/yourorg/financial-crime-red-team/internal/genome"
 	"github.com/yourorg/financial-crime-red-team/internal/scenario"
 )
 
@@ -38,6 +40,7 @@ type ExperimentHandler struct {
 	scenarioRepo *scenario.Repository
 	covRepo      *coverage.Repository
 	evidenceRepo *evidence.Repository
+	campaignRepo *campaign.Repository
 }
 
 // NewExperimentHandler creates an ExperimentHandler.
@@ -47,6 +50,7 @@ func NewExperimentHandler(
 	scenarioRepo *scenario.Repository,
 	covRepo *coverage.Repository,
 	evidenceRepo *evidence.Repository,
+	campaignRepo *campaign.Repository,
 ) *ExperimentHandler {
 	return &ExperimentHandler{
 		expRepo:      expRepo,
@@ -54,6 +58,7 @@ func NewExperimentHandler(
 		scenarioRepo: scenarioRepo,
 		covRepo:      covRepo,
 		evidenceRepo: evidenceRepo,
+		campaignRepo: campaignRepo,
 	}
 }
 
@@ -107,6 +112,7 @@ func (h *ExperimentHandler) ListExperiments(w http.ResponseWriter, r *http.Reque
 type createExperimentRequest struct {
 	CohortID           uuid.UUID      `json:"cohort_id"`
 	ScenarioProposalID *uuid.UUID     `json:"scenario_proposal_id"` // optional
+	CampaignID         *uuid.UUID     `json:"campaign_id"`          // optional
 	Name               string         `json:"name"`
 	DeclaredChange     string         `json:"declared_change"`
 	MutationType       string         `json:"mutation_type"`
@@ -151,6 +157,40 @@ func (h *ExperimentHandler) CreateExperiment(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusUnprocessableEntity, "scenario_not_approved",
 				"Referenced scenario proposal must be approved before creating an experiment")
 			return
+		}
+	}
+
+	// Campaign budget is checked before any execution so a full campaign does
+	// not consume compute. The counter is incremented only after a successful
+	// run is persisted.
+	if req.CampaignID != nil {
+		if h.campaignRepo == nil {
+			writeError(w, http.StatusNotImplemented, "not_configured", "Campaigns are not configured")
+			return
+		}
+		switch err := h.campaignRepo.CanRun(r.Context(), *req.CampaignID); {
+		case err == nil:
+		case errors.Is(err, campaign.ErrNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "Campaign not found")
+			return
+		case errors.Is(err, campaign.ErrNotActive):
+			writeError(w, http.StatusConflict, "campaign_not_active", "Campaign is not active")
+			return
+		case errors.Is(err, campaign.ErrBudgetExhausted):
+			writeError(w, http.StatusConflict, "campaign_budget_exhausted",
+				"Campaign budget is exhausted")
+			return
+		default:
+			slog.Error("check campaign budget", "campaign_id", *req.CampaignID, "err", err)
+			writeError(w, http.StatusInternalServerError, "db_error", "Failed to check campaign")
+			return
+		}
+		if c, err := h.campaignRepo.Get(r.Context(), *req.CampaignID); err == nil {
+			if c.CohortID != nil && *c.CohortID != req.CohortID {
+				writeError(w, http.StatusUnprocessableEntity, "campaign_cohort_mismatch",
+					"Campaign belongs to a different cohort")
+				return
+			}
 		}
 	}
 
@@ -210,6 +250,7 @@ func (h *ExperimentHandler) CreateExperiment(w http.ResponseWriter, r *http.Requ
 		MutationType:       mt,
 		MutationSpec:       req.MutationSpec,
 		ScenarioProposalID: req.ScenarioProposalID,
+		CampaignID:         req.CampaignID,
 	}
 
 	result, err := experiment.Execute(spec, sel, time.Now())
@@ -230,14 +271,37 @@ func (h *ExperimentHandler) CreateExperiment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update coverage (AC-05.1).
-	allRules := append(result.Outcome.NewAlertRuleIDs, result.Outcome.DroppedAlertRuleIDs...)
-	for _, r2 := range result.Baseline.RawAlerts {
-		allRules = append(allRules, r2.RuleID)
+	if req.CampaignID != nil && h.campaignRepo != nil {
+		if err := h.campaignRepo.IncrementUsed(r.Context(), *req.CampaignID); err != nil {
+			// The experiment is already persisted; warn rather than fail the
+			// request. A concurrent request may have taken the last slot.
+			slog.Warn("increment campaign usage", "campaign_id", *req.CampaignID, "err", err)
+		}
 	}
-	if len(allRules) > 0 {
-		if err := h.covRepo.RecordTriggers(r.Context(), allRules, cfg.ControlVersion); err != nil {
-			slog.Warn("record coverage triggers", "err", err) // non-fatal
+
+	// Update coverage from the five-status outcomes of both runs (AC-05.1).
+	// Recording every rule seen in an alert list would overstate coverage, so
+	// the outcomes — including not_triggered and not_applicable — are the
+	// source of truth.
+	outcomes := append(append([]aml.RuleOutcome{}, result.Baseline.Outcomes...), result.Variant.Outcomes...)
+	if err := h.covRepo.RecordOutcomes(r.Context(), outcomes, cfg.ControlVersion); err != nil {
+		slog.Warn("record coverage outcomes", "err", err) // non-fatal
+	}
+
+	// Scenario coverage: record the genome dimensions of the linked proposal.
+	// Encoding is deterministic, so this does not require a second model call.
+	if req.ScenarioProposalID != nil {
+		if p, err := h.scenarioRepo.Get(r.Context(), *req.ScenarioProposalID); err == nil {
+			g := genome.Encode(p)
+			dims := make(map[string]string, len(genome.DimensionNames))
+			for _, name := range genome.DimensionNames {
+				dims[name] = g.DimensionValue(name)
+			}
+			if err := h.covRepo.RecordScenario(r.Context(), dims); err != nil {
+				slog.Warn("record scenario coverage", "proposal_id", *req.ScenarioProposalID, "err", err)
+			}
+		} else {
+			slog.Warn("load proposal for scenario coverage", "proposal_id", *req.ScenarioProposalID, "err", err)
 		}
 	}
 

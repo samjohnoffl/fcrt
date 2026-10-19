@@ -287,18 +287,11 @@ func handleRunExperiment(
 		return fmt.Errorf("save experiment result: %w", err)
 	}
 
-	// Update rule coverage from both baseline and variant alerts.
-	var ruleIDs []aml.RuleID
-	for _, a := range result.Baseline.RawAlerts {
-		ruleIDs = append(ruleIDs, a.RuleID)
-	}
-	for _, a := range result.Variant.RawAlerts {
-		ruleIDs = append(ruleIDs, a.RuleID)
-	}
-	if len(ruleIDs) > 0 {
-		if err := coverageRepo.RecordTriggers(ctx, ruleIDs, amlRuleVersion); err != nil {
-			slog.Warn("record coverage triggers failed", "pair_id", result.Pair.ID, "err", err)
-		}
+	// Update coverage from the five-status outcomes of both runs. A rule that
+	// did not trigger must not be counted as if it had.
+	outcomes := append(append([]aml.RuleOutcome{}, result.Baseline.Outcomes...), result.Variant.Outcomes...)
+	if err := coverageRepo.RecordOutcomes(ctx, outcomes, amlRuleVersion); err != nil {
+		slog.Warn("record coverage outcomes failed", "pair_id", result.Pair.ID, "err", err)
 	}
 
 	slog.Info("experiment completed", "pair_id", result.Pair.ID, "evasion_delta", result.Outcome.EvasionDelta)
@@ -324,8 +317,8 @@ func handleRecomputeCoverage(
 	}
 
 	if len(ruleIDs) == 0 {
-		// Ensure all known rules have rows.
-		ruleIDs = []aml.RuleID{aml.RuleStructuring, aml.RuleLayering, aml.RuleRapidMovement}
+		// Ensure all known controls have rows.
+		ruleIDs = append([]aml.RuleID{}, aml.AllRules...)
 	}
 
 	if err := coverageRepo.EnsureRules(ctx, ruleIDs, job.RuleVersion); err != nil {

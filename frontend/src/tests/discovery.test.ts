@@ -30,10 +30,12 @@ const cov: CoverageSummary = {
   covered_rules: 1,
   coverage_pct: 33.3,
   rules: [
-    { id: 'r1', rule_id: 'structuring_v1', rule_version: 'v1', times_triggered: 5, coverage_weight: 0.16, updated_at: '' },
-    { id: 'r2', rule_id: 'velocity_v1',    rule_version: 'v1', times_triggered: 0, coverage_weight: 1.0,  updated_at: '' },
-    { id: 'r3', rule_id: 'shell_v1',       rule_version: 'v1', times_triggered: 0, coverage_weight: 1.0,  updated_at: '' },
+    { id: 'r1', rule_id: 'structuring_v1', rule_version: 'v1', times_triggered: 5, times_not_triggered: 0, times_not_applicable: 0, times_inconclusive: 0, times_failed: 0, coverage_weight: 0.16, updated_at: '' },
+    { id: 'r2', rule_id: 'velocity_v1',    rule_version: 'v1', times_triggered: 0, times_not_triggered: 2, times_not_applicable: 1, times_inconclusive: 0, times_failed: 0, coverage_weight: 1.0,  updated_at: '' },
+    { id: 'r3', rule_id: 'shell_v1',       rule_version: 'v1', times_triggered: 0, times_not_triggered: 0, times_not_applicable: 3, times_inconclusive: 0, times_failed: 0, coverage_weight: 1.0,  updated_at: '' },
   ],
+  scenario: [],
+  outcomes: [],
 }
 
 describe('discovery analytics', () => {
