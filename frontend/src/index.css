@@ -266,6 +266,13 @@ input, select, textarea { font-family: inherit; }
 
 /* ── Tables ─────────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
+/* Keep the row action visible when a wide table scrolls horizontally. */
+.table-wrap .col-actions {
+  position: sticky;
+  right: 0;
+  background: var(--bg-elevated);
+  box-shadow: -8px 0 12px -8px rgba(0, 0, 0, 0.18);
+}
 table {
   width: 100%;
   border-collapse: collapse;

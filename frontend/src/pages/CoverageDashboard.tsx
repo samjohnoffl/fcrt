@@ -82,9 +82,19 @@ export function CoverageDashboard() {
               <div className="card" style={{ marginBottom: 24 }}>
                 <div className="card-header"><span className="card-title">Trigger Frequency by Control</span></div>
                 <div className="card-body">
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={chartData} barSize={28} margin={{ top: 0, right: 8, bottom: 0, left: 0 }}>
-                      <XAxis dataKey="name" tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={chartData} barSize={24} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
+                        interval={0}
+                        angle={-28}
+                        textAnchor="end"
+                        height={64}
+                        tickFormatter={(value: string) => value.replace(/_v\d+$/, '')}
+                      />
                       <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} axisLine={false} tickLine={false} />
                       <Tooltip
                         contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }}

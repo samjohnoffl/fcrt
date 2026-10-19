@@ -73,7 +73,7 @@ export function ReviewQueue() {
                     <th scope="col">Mutation</th>
                     <th scope="col">Evasion delta</th>
                     <th scope="col">Created</th>
-                    <th scope="col"><span className="sr-only">Actions</span></th>
+                    <th scope="col" className="col-actions"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -91,7 +91,7 @@ export function ReviewQueue() {
                         <td className="td-muted">
                           {new Date(item.created_at).toLocaleDateString()}
                         </td>
-                        <td>
+                        <td className="col-actions">
                           <button
                             className="btn btn-sm"
                             onClick={() => openForm(item.id)}
