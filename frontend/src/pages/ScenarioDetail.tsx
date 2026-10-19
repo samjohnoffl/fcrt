@@ -96,7 +96,7 @@ export function ScenarioDetail() {
 
         {/* Evasion vector */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header"><span className="card-title">Expected Evasion Vector</span></div>
+          <div className="card-header"><span className="card-title">Expected evasion vector</span></div>
           <div className="card-body">
             <p style={{ fontSize: 13, lineHeight: 1.7 }}>{s.expected_evasion_vector}</p>
           </div>
@@ -104,7 +104,7 @@ export function ScenarioDetail() {
 
         {/* Suggested tx pattern */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header"><span className="card-title">Suggested Transaction Pattern</span></div>
+          <div className="card-header"><span className="card-title">Suggested transaction pattern</span></div>
           <div className="card-body">
             <JsonViewer value={s.suggested_tx_pattern} />
           </div>

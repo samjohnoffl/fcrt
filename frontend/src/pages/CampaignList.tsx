@@ -80,7 +80,17 @@ export function CampaignList() {
                  </thead>
                  <tbody>
                    {campaigns.map(c => (
-                     <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/campaigns/${c.id}`)}>
+                     <tr
+                       key={c.id}
+                       className="clickable-row"
+                       tabIndex={0}
+                       role="link"
+                       aria-label={`Open campaign ${c.name}`}
+                       onClick={() => nav(`/campaigns/${c.id}`)}
+                       onKeyDown={event => {
+                         if (event.key === 'Enter') nav(`/campaigns/${c.id}`)
+                       }}
+                     >
                        <td>
                          <div style={{ fontWeight: 500 }}>{c.name}</div>
                          {c.goal && <div className="td-muted" style={{ fontSize: 12 }}>{c.goal}</div>}
@@ -107,7 +117,7 @@ export function CampaignList() {
         onClick={e => { if (e.target === e.currentTarget) setDialog(false) }}
       >
         <div className="dialog">
-          <h2 id="campaign-title" className="dialog-title">New Campaign</h2>
+          <h2 id="campaign-title" className="dialog-title">New campaign</h2>
           <p className="dialog-body">
             The campaign fixes the control configuration for every experiment it admits and
             refuses new runs once the budget is spent.

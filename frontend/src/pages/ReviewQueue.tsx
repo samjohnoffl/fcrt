@@ -47,7 +47,7 @@ export function ReviewQueue() {
   return (
     <>
       <PageHeader
-        title="Review Queue"
+        title="Review queue"
         subtitle="Completed experiments awaiting a reviewer decision"
       />
       <div className="page-body">

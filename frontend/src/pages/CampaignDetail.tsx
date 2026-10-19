@@ -154,7 +154,17 @@ export function CampaignDetail() {
                   </thead>
                   <tbody>
                     {linked.map(e => (
-                      <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/experiments/${e.id}`)}>
+                      <tr
+                        key={e.id}
+                        className="clickable-row"
+                        tabIndex={0}
+                        role="link"
+                        aria-label={`Open experiment ${e.name}`}
+                        onClick={() => nav(`/experiments/${e.id}`)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') nav(`/experiments/${e.id}`)
+                        }}
+                      >
                         <td>{e.name}</td>
                         <td><StatusBadge status={e.status} /></td>
                         <td className="td-muted">{new Date(e.created_at).toLocaleDateString()}</td>

@@ -1,4 +1,5 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { getUser, hasRole, clearSession } from '../lib/session'
 import { roleLabel } from '../lib/roles'
 import { authApi } from '../api/endpoints'
@@ -9,7 +10,7 @@ import { Logo } from './Logo'
 
 type IconName =
   | 'dashboard' | 'discovery' | 'cohorts' | 'scenarios' | 'experiments'
-  | 'coverage' | 'benchmark' | 'reviews' | 'users' | 'audit' | 'campaigns'
+  | 'coverage' | 'benchmark' | 'reviews' | 'users' | 'audit' | 'campaigns' | 'help'
 
 const SVG = {
   fill: 'none',
@@ -93,6 +94,13 @@ const ICONS: Record<IconName, JSX.Element> = {
       <path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3" />
     </svg>
   ),
+  help: (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...SVG}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.7 9.3a2.5 2.5 0 1 1 3.7 2.2c-.8.5-1.4 1.1-1.4 2" />
+      <path d="M12 16.9h.01" />
+    </svg>
+  ),
 }
 
 function NavIcon({ name }: { name: IconName }) {
@@ -107,7 +115,7 @@ const WORKSPACE_NAV: { to: string; icon: IconName; label: string }[] = [
   { to: '/scenarios',   icon: 'scenarios',   label: 'Scenarios' },
   { to: '/experiments', icon: 'experiments', label: 'Experiments' },
   { to: '/campaigns',   icon: 'campaigns',   label: 'Campaigns' },
-  { to: '/reviews',     icon: 'reviews',     label: 'Review Queue' },
+  { to: '/reviews',     icon: 'reviews',     label: 'Review queue' },
   { to: '/coverage',    icon: 'coverage',    label: 'Coverage' },
   { to: '/discovery',   icon: 'discovery',   label: 'Discovery' },
   { to: '/benchmark',   icon: 'benchmark',   label: 'Benchmark Lab' },
@@ -118,9 +126,38 @@ const ADMIN_NAV: { to: string; icon: IconName; label: string }[] = [
   { to: '/audit', icon: 'audit', label: 'Audit log' },
 ]
 
+const HELP_NAV: { to: string; icon: IconName; label: string }[] = [
+  { to: '/how-to', icon: 'help', label: 'How to use' },
+]
+
+const ALL_NAV = [...WORKSPACE_NAV, ...ADMIN_NAV, ...HELP_NAV]
+
+const BASE_TITLE = 'AML Red Team · Financial Crime AI'
+
+/** Prefixes for detail routes, so a cohort/experiment page still names itself. */
+const DETAIL_TITLES: [string, string][] = [
+  ['/cohorts/', 'Cohort'],
+  ['/scenarios/', 'Scenario'],
+  ['/experiments/', 'Experiment'],
+  ['/campaigns/', 'Campaign'],
+  ['/evidence/', 'Evidence bundle'],
+]
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const user = getUser()
+
+  // Keep the browser tab meaningful on every route (accessibility + orientation).
+  useEffect(() => {
+    const exact = ALL_NAV.find(n => n.to === pathname)
+    const detail = DETAIL_TITLES.find(([prefix]) => pathname.startsWith(prefix))
+    const label = exact?.label ?? detail?.[1]
+    document.title = label ? `${label} · AML Red Team` : BASE_TITLE
+    return () => {
+      document.title = BASE_TITLE
+    }
+  }, [pathname])
 
   function signOut() {
     // Best-effort server call (stateless token; failure is harmless).
@@ -132,6 +169,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="layout">
+      <a className="skip-link" href="#main">Skip to content</a>
       <aside className="sidebar">
         <div className="sidebar-header">
           <Logo size={34} />
@@ -170,6 +208,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
               ))}
             </>
           )}
+
+          <div className="nav-section-label">Help</div>
+          {HELP_NAV.map(({ to, icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+            >
+              <NavIcon name={icon} />
+              {label}
+            </NavLink>
+          ))}
         </nav>
 
         <div className="sidebar-user">
@@ -189,7 +239,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       </aside>
-      <div className="main-content">{children}</div>
+      <main id="main" className="main-content" tabIndex={-1}>{children}</main>
     </div>
   )
 }

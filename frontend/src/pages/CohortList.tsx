@@ -23,7 +23,7 @@ export function CohortList() {
       <PageHeader
         title="Cohorts"
         subtitle="Versioned synthetic banking datasets"
-        actions={<RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button></RoleGate>}
+        actions={<RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New cohort</button></RoleGate>}
       />
       <div className="page-body">
         <div className="filter-bar" style={{ marginBottom: 16 }}>
@@ -48,7 +48,7 @@ export function CohortList() {
             <EmptyState
               title="No cohorts found"
               body={filter !== 'all' ? `No ${filter} cohorts.` : 'Create your first cohort to get started.'}
-              action={filter === 'all' ? <RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button></RoleGate> : undefined}
+              action={filter === 'all' ? <RoleGate min="analyst"><button className="btn btn-primary btn-sm" onClick={() => nav('/cohorts/new')}>+ New cohort</button></RoleGate> : undefined}
             />
           ) : (
             <div className="table-wrap">
@@ -65,7 +65,17 @@ export function CohortList() {
                 </thead>
                 <tbody>
                   {filtered.map(c => (
-                    <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/cohorts/${c.id}`)}>
+                    <tr
+                      key={c.id}
+                      className="clickable-row"
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`Open cohort ${c.name}`}
+                      onClick={() => nav(`/cohorts/${c.id}`)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') nav(`/cohorts/${c.id}`)
+                      }}
+                    >
                       <td style={{ fontWeight: 500 }}>{c.name}</td>
                       <td className="td-mono">{c.seed}</td>
                       <td>{c.manifest?.entity_count ?? '—'}</td>

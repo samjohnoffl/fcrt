@@ -52,16 +52,16 @@ export function EvidenceViewer() {
   }
 
   if (isLoading) return (
-    <><PageHeader title="Evidence Bundle" /><div className="page-body"><LoadingState /></div></>
+    <><PageHeader title="Evidence bundle" /><div className="page-body"><LoadingState /></div></>
   )
   if (error || !bundle) return (
-    <><PageHeader title="Evidence Bundle" /><div className="page-body"><ErrorState title="Failed to load evidence" body={String(error)} /></div></>
+    <><PageHeader title="Evidence bundle" /><div className="page-body"><ErrorState title="Failed to load evidence" body={String(error)} /></div></>
   )
 
   return (
     <>
       <PageHeader
-        title="Evidence Bundle"
+        title="Evidence bundle"
         subtitle={`Run · ${bundle.run_id}`}
         actions={
           <button className="btn btn-secondary btn-sm" onClick={download}>
@@ -73,7 +73,7 @@ export function EvidenceViewer() {
         {/* Checksum panel */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="card-header">
-            <span className="card-title">Integrity Checksum</span>
+            <span className="card-title">Integrity checksum</span>
             <button className="btn btn-ghost btn-sm" onClick={verify} disabled={verifying}>
               {verifying ? 'Verifying…' : '✓ Verify Checksum'}
             </button>
@@ -97,7 +97,7 @@ export function EvidenceViewer() {
 
         {/* Cohort snapshot */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header"><span className="card-title">Cohort Snapshot</span></div>
+          <div className="card-header"><span className="card-title">Cohort snapshot</span></div>
           <div className="card-body">
             <JsonViewer value={bundle.cohort_snapshot} maxHeight={200} />
           </div>
@@ -105,7 +105,7 @@ export function EvidenceViewer() {
 
         {/* AML diff summary */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header"><span className="card-title">AML Diff Summary</span></div>
+          <div className="card-header"><span className="card-title">AML diff summary</span></div>
           <div className="card-body">
             <div className="metric-grid">
               <div>
@@ -129,7 +129,7 @@ export function EvidenceViewer() {
         {/* Coverage delta */}
         {bundle.coverage_delta && bundle.coverage_delta.length > 0 && (
           <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-header"><span className="card-title">Coverage Delta</span></div>
+            <div className="card-header"><span className="card-title">Coverage delta</span></div>
             <div className="table-wrap">
               <table aria-label="Coverage delta">
                 <thead>
@@ -169,7 +169,7 @@ export function EvidenceViewer() {
         {/* Full bundle JSON */}
         <div className="card">
           <div className="card-body">
-            <CollapsibleJson label="Full Evidence Bundle (raw JSON)" value={bundle} />
+            <CollapsibleJson label="Full evidence bundle (raw JSON)" value={bundle} />
           </div>
         </div>
 

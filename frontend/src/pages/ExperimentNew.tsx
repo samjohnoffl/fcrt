@@ -98,7 +98,7 @@ export function ExperimentNew() {
   return (
     <>
       <PageHeader
-        title="New Experiment"
+        title="New experiment"
         subtitle={step === 'config' ? 'Step 1 — Configure' : 'Step 2 — Preview & Run'}
       />
       <div className="page-body">
@@ -231,11 +231,11 @@ export function ExperimentNew() {
           <div style={{ maxWidth: 640 }}>
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-header">
-                <span className="card-title">Pre-run Preview</span>
+                <span className="card-title">Pre-run preview</span>
                 <span className="tag">Review before executing</span>
               </div>
               <div className="card-body">
-                <table style={{ width: '100%', fontSize: 13 }}>
+                <table aria-label="Pre-run summary" style={{ width: '100%', fontSize: 13 }}>
                   <tbody>
                     {[
                       ['Cohort', selectedCohort?.name ?? form.cohort_id],
@@ -256,7 +256,7 @@ export function ExperimentNew() {
             </div>
 
             <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-header"><span className="card-title">Mutation Spec</span></div>
+              <div className="card-header"><span className="card-title">Mutation spec</span></div>
               <div className="card-body">
                 <JsonViewer value={form.mutation_spec} maxHeight={200} />
               </div>

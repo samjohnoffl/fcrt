@@ -43,7 +43,7 @@ describe('CoverageDashboard', () => {
     vi.stubGlobal('fetch', stubFetch([['/coverage', { data: summary }]]))
     renderWithProviders(<CoverageDashboard />)
 
-    await waitFor(() => expect(screen.getByText('Control & Outcome Map')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Control & outcome map')).toBeInTheDocument())
 
     const table = screen.getByRole('table', { name: /coverage rule table/i })
     expect(within(table).getByText('structuring_v1')).toBeInTheDocument()
@@ -56,7 +56,7 @@ describe('CoverageDashboard', () => {
     expect(within(velocityRow).getAllByText('1').length).toBeGreaterThanOrEqual(2) // not applicable + failed
 
     // Scenario coverage is its own map, grouped by genome dimension.
-    expect(screen.getByText('Scenario Coverage Map')).toBeInTheDocument()
+    expect(screen.getByText('Scenario coverage map')).toBeInTheDocument()
     expect(screen.getByText(/domestic/)).toBeInTheDocument()
     expect(screen.getByText(/cross_border/)).toBeInTheDocument()
     expect(screen.getByText('1 dimensions')).toBeInTheDocument()
@@ -66,7 +66,7 @@ describe('CoverageDashboard', () => {
     vi.stubGlobal('fetch', stubFetch([['/coverage', { data: { ...summary, scenario: [] } }]]))
     renderWithProviders(<CoverageDashboard />)
 
-    await waitFor(() => expect(screen.getByText('Scenario Coverage Map')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Scenario coverage map')).toBeInTheDocument())
     expect(screen.getByText(/No scenario coverage yet/i)).toBeInTheDocument()
   })
 })

@@ -1,6 +1,6 @@
 # Financial Crime AI Red Team (FCRT)
 
-> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 408 automated tests passing (300 Go + 108 Vitest).
+> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 410 automated tests passing (300 Go + 110 Vitest).
 
 A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection models** using synthetic data, Gemini-assisted scenario generation, and counterfactual experiments. No real customer PII is ever used.
 
@@ -11,7 +11,7 @@ A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection mod
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  Browser — React 18 + TypeScript SPA                                         │
-│  Dashboard · Cohorts · Scenarios · Experiments · Campaigns · Review Queue    │
+│  Dashboard · Cohorts · Scenarios · Experiments · Campaigns · Review queue    │
 │  Coverage · Discovery · Benchmark Lab                              Firebase  │
 │  Username/password session · role-aware UI (analyst < admin)       Hosting   │
 └──────────────────────────────────┬───────────────────────────────────────────┘
@@ -567,11 +567,12 @@ DATABASE_TEST_URL='postgres://fcrt:fcrt@localhost:5433/fincrime_redteam?sslmode=
 cd frontend && npm test
 ```
 
-Current status: **408 tests** (300 Go + 108 frontend). In the default `-short`
+Current status: **410 tests** (300 Go + 110 frontend). In the default `-short`
 mode the DB-backed Go integration tests skip; with a migrated database reachable
 via `DATABASE_TEST_URL` all 300 run. Frontend tests cover the session layer, the
 role model, the dashboard, scenario creation, campaigns, the review workflow,
-the three-map coverage view, user management and the shared components.
+the three-map coverage view, user management, the in-product guide and the
+shared components.
 
 ---
 
@@ -584,8 +585,21 @@ library only loads on the pages that use it.
 
 | Area | Pages |
 |---|---|
-| Workspace | Dashboard, Cohorts, Scenarios, Experiments, Campaigns, Review Queue, Coverage, Discovery, Benchmark Lab |
+| Workspace | Dashboard, Cohorts, Scenarios, Experiments, Campaigns, Review queue, Coverage, Discovery, Benchmark Lab |
 | Administration (admin only) | Users, Audit log |
+| Help | How to use |
+
+The *How to use* page is the in-product guide: a five-step workflow walkthrough
+that links straight to the relevant page, an explanation of where Gemini is used
+and where it deliberately is not, the five control-outcome states, and a
+glossary of the platform's core concepts. It is reachable from the **Help**
+section at the end of the sidebar for every signed-in role.
+
+**Accessibility.** The shell has a skip-to-content link, a `main` landmark and a
+per-route document title; nav and help items are real links with an obvious
+focus ring; every table has an accessible name; and rows that navigate on click
+are reachable by keyboard (`Tab` + `Enter`) with an `aria-label`. Colour is never
+the only signal — statuses carry text and a badge, not just a hue.
 
 **Roles are visible, not just enforced.** The sign-in screen and the Users page
 both spell out what an analyst and an administrator can do; the sidebar groups

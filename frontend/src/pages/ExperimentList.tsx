@@ -77,7 +77,17 @@ export function ExperimentList() {
                 </thead>
                 <tbody>
                   {filtered.map(e => (
-                    <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/experiments/${e.id}`)}>
+                    <tr
+                      key={e.id}
+                      className="clickable-row"
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`Open experiment ${e.name}`}
+                      onClick={() => nav(`/experiments/${e.id}`)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') nav(`/experiments/${e.id}`)
+                      }}
+                    >
                       <td style={{ fontWeight: 500, maxWidth: 240 }} className="truncate">{e.name}</td>
                       <td><span className="tag">{e.mutation_type}</span></td>
                       <td><StatusBadge status={e.status} /></td>

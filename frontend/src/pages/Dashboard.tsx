@@ -61,8 +61,8 @@ export function Dashboard() {
         subtitle="AML Red Team overview"
         actions={
           <RoleGate min="analyst">
-            <button className="btn btn-secondary btn-sm" onClick={() => nav('/cohorts/new')}>+ New Cohort</button>
-            <button className="btn btn-secondary btn-sm" onClick={() => nav('/scenarios')}>Request Scenario</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => nav('/cohorts/new')}>+ New cohort</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => nav('/scenarios')}>Request scenario</button>
             <button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>Run experiment</button>
           </RoleGate>
         }
@@ -103,7 +103,7 @@ export function Dashboard() {
         {/* Recent experiments */}
         <div className="card">
           <div className="card-header">
-            <span className="card-title">Recent Experiments</span>
+            <span className="card-title">Recent experiments</span>
             <button className="btn btn-ghost btn-sm" onClick={() => nav('/experiments')}>View all →</button>
           </div>
           {exp.isLoading ? (
@@ -130,7 +130,17 @@ export function Dashboard() {
                 </thead>
                 <tbody>
                   {recent.map(e => (
-                    <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/experiments/${e.id}`)}>
+                    <tr
+                      key={e.id}
+                      className="clickable-row"
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`Open experiment ${e.name}`}
+                      onClick={() => nav(`/experiments/${e.id}`)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') nav(`/experiments/${e.id}`)
+                      }}
+                    >
                       <td>{e.name}</td>
                       <td><StatusBadge status={e.status} /></td>
                       <td>

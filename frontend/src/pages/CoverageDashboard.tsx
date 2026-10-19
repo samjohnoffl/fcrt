@@ -39,7 +39,7 @@ export function CoverageDashboard() {
   return (
     <>
       <PageHeader
-        title="Coverage Dashboard"
+        title="Coverage"
         subtitle="Three separate maps: control outcomes, scenario dimensions, and outcome distribution"
       />
       <div className="page-body">
@@ -80,7 +80,7 @@ export function CoverageDashboard() {
             {/* Bar chart */}
             {chartData.length > 0 && (
               <div className="card" style={{ marginBottom: 24 }}>
-                <div className="card-header"><span className="card-title">Trigger Frequency by Control</span></div>
+                <div className="card-header"><span className="card-title">Trigger frequency by control</span></div>
                 <div className="card-body">
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={chartData} barSize={24} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
@@ -114,7 +114,7 @@ export function CoverageDashboard() {
             {/* Control + outcome maps */}
             <div className="card" style={{ marginBottom: 24 }}>
               <div className="card-header">
-                <span className="card-title">Control &amp; Outcome Map</span>
+                <span className="card-title">Control &amp; outcome map</span>
                 {uncovered.length > 0 && (
                   <span className="badge badge-failed">{uncovered.length} never triggered</span>
                 )}
@@ -191,7 +191,7 @@ export function CoverageDashboard() {
             {/* Scenario map */}
             <div className="card">
               <div className="card-header">
-                <span className="card-title">Scenario Coverage Map</span>
+                <span className="card-title">Scenario coverage map</span>
                 <span className="badge">{scenarioByDimension.size} dimensions</span>
               </div>
               <div className="card-body">

@@ -107,7 +107,7 @@ export function ExperimentDetail() {
         {isComplete && outcome && (
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-header">
-              <span className="card-title">Alert Diff</span>
+              <span className="card-title">Alert diff</span>
               <DeltaBadge delta={outcome.evasion_delta} />
             </div>
             <div className="table-wrap">
@@ -172,7 +172,7 @@ export function ExperimentDetail() {
             </div>
           </div>
           <div className="card">
-            <div className="card-header"><span className="card-title">Declared Change</span></div>
+            <div className="card-header"><span className="card-title">Declared change</span></div>
             <div className="card-body">
               <p style={{ fontSize: 13, lineHeight: 1.7 }}>{exp.declared_change}</p>
             </div>
@@ -181,7 +181,7 @@ export function ExperimentDetail() {
 
         {/* Mutation spec */}
         <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-header"><span className="card-title">Mutation Spec</span></div>
+          <div className="card-header"><span className="card-title">Mutation spec</span></div>
           <div className="card-body">
             <JsonViewer value={exp.mutation_spec ?? {}} maxHeight={200} />
           </div>

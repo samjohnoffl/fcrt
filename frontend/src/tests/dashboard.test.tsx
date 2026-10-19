@@ -125,6 +125,6 @@ describe('Dashboard', () => {
 
     expect(await screen.findByText('Coverage unavailable')).toBeInTheDocument()
     // The rest of the page still renders.
-    expect(screen.getByText('Recent Experiments')).toBeInTheDocument()
+    expect(screen.getByText('Recent experiments')).toBeInTheDocument()
   })
 })

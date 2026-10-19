@@ -67,7 +67,17 @@ export function ScenarioList() {
                 </thead>
                 <tbody>
                   {filtered.map(s => (
-                    <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/scenarios/${s.id}`)}>
+                    <tr
+                      key={s.id}
+                      className="clickable-row"
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`Open scenario ${s.scenario_type}`}
+                      onClick={() => nav(`/scenarios/${s.id}`)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') nav(`/scenarios/${s.id}`)
+                      }}
+                    >
                       <td><span className="tag">{s.scenario_type}</span></td>
                       <td className="td-mono td-muted">{s.cohort_id.slice(0, 8)}…</td>
                       <td><StatusBadge status={s.status} /></td>
@@ -88,7 +98,7 @@ export function ScenarioList() {
         onClick={e => { if (e.target === e.currentTarget) setRequestDialog(false) }}
       >
         <div className="dialog">
-          <h2 id="req-title" className="dialog-title">Request Gemini Scenario</h2>
+          <h2 id="req-title" className="dialog-title">Request Gemini scenario</h2>
           <p className="dialog-body">Select a locked cohort. Gemini will propose an AML evasion scenario based on the cohort profile and current coverage gaps.</p>
           <div className="form-group">
             <label className="form-label" htmlFor="cohort-select">Cohort *</label>

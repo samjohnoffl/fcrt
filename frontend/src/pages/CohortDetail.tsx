@@ -33,13 +33,13 @@ export function CohortDetail() {
 
   if (isLoading) return (
     <>
-      <PageHeader title="Cohort Detail" />
+      <PageHeader title="Cohort" />
       <div className="page-body"><LoadingState /></div>
     </>
   )
   if (error || !cohort) return (
     <>
-      <PageHeader title="Cohort Detail" />
+      <PageHeader title="Cohort" />
       <div className="page-body"><ErrorState title="Failed to load cohort" body={String(error)} /></div>
     </>
   )
@@ -103,7 +103,7 @@ export function CohortDetail() {
           {/* Breakdown chart */}
           {mfst && (
             <div className="card">
-              <div className="card-header"><span className="card-title">Dataset Breakdown</span></div>
+              <div className="card-header"><span className="card-title">Dataset breakdown</span></div>
               <div className="card-body">
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={barData} barSize={36}>
@@ -123,7 +123,7 @@ export function CohortDetail() {
           <div className="card">
             <div className="card-header"><span className="card-title">Metadata</span></div>
             <div className="card-body">
-              <table style={{ width: '100%', fontSize: 12 }}>
+              <table aria-label="Cohort metadata" style={{ width: '100%', fontSize: 12 }}>
                 <tbody>
                   {[
                     ['ID', id],

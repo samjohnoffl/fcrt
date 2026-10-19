@@ -24,6 +24,7 @@ const CoverageDashboard = lazy(() => import('./pages/CoverageDashboard').then(m 
 const ReviewQueue       = lazy(() => import('./pages/ReviewQueue').then(m => ({ default: m.ReviewQueue })))
 const CampaignList      = lazy(() => import('./pages/CampaignList').then(m => ({ default: m.CampaignList })))
 const CampaignDetail    = lazy(() => import('./pages/CampaignDetail').then(m => ({ default: m.CampaignDetail })))
+const HowTo             = lazy(() => import('./pages/HowTo').then(m => ({ default: m.HowTo })))
 const BenchmarkLab      = lazy(() => import('./pages/BenchmarkLab').then(m => ({ default: m.BenchmarkLab })))
 const Users             = lazy(() => import('./pages/Users').then(m => ({ default: m.Users })))
 const AuditLog          = lazy(() => import('./pages/AuditLog').then(m => ({ default: m.AuditLog })))
@@ -62,6 +63,7 @@ export default function App() {
                   <Route path="/reviews"                   element={<ReviewQueue />} />
                   <Route path="/coverage"                  element={<CoverageDashboard />} />
                   <Route path="/benchmark"                 element={<BenchmarkLab />} />
+                  <Route path="/how-to"                    element={<HowTo />} />
 
                   {/* Admin only */}
                   <Route path="/users" element={<RequireRole min="admin"><Users /></RequireRole>} />

@@ -32,7 +32,7 @@ export function DiscoveryOverview() {
   return (
     <>
       <PageHeader
-        title="Discovery Overview"
+        title="Discovery overview"
         subtitle="Where the red team found evasion — and where detection is blind"
         actions={
           <button className="btn btn-primary btn-sm" onClick={() => nav('/experiments/new')}>
@@ -58,7 +58,7 @@ export function DiscoveryOverview() {
             <div className="metric-sub">distinct AML rules bypassed</div>
           </div>
           <div className="metric-card">
-            <div className="metric-label">Detection Blind Spots</div>
+            <div className="metric-label">Detection blind spots</div>
             <div className="metric-value" style={{ color: 'var(--warning)' }}>
               {metrics.uncoveredRules}
             </div>
@@ -76,7 +76,7 @@ export function DiscoveryOverview() {
         {/* Top discoveries */}
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="card-header">
-            <span className="card-title">Top Discoveries</span>
+            <span className="card-title">Top discoveries</span>
             <button className="btn btn-ghost btn-sm" onClick={() => nav('/experiments')}>
               View all →
             </button>
@@ -111,8 +111,14 @@ export function DiscoveryOverview() {
                   {top.map(e => (
                     <tr
                       key={e.id}
-                      style={{ cursor: 'pointer' }}
+                      className="clickable-row"
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`Open experiment ${e.name}`}
                       onClick={() => nav(`/experiments/${e.id}`)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') nav(`/experiments/${e.id}`)
+                      }}
                     >
                       <td>{e.name}</td>
                       <td><span className="tag">{e.mutation_type}</span></td>
@@ -139,7 +145,7 @@ export function DiscoveryOverview() {
           {/* Evasion vectors */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">Evasion Vectors</span>
+              <span className="card-title">Evasion vectors</span>
             </div>
             {evaded.length === 0 ? (
               <div className="page-body text-muted" style={{ fontSize: 13 }}>
@@ -160,7 +166,7 @@ export function DiscoveryOverview() {
           {/* Detection blind spots */}
           <div className="card">
             <div className="card-header">
-              <span className="card-title">Detection Blind Spots</span>
+              <span className="card-title">Detection blind spots</span>
               <button className="btn btn-ghost btn-sm" onClick={() => nav('/coverage')}>
                 Coverage →
               </button>
@@ -199,7 +205,7 @@ export function DiscoveryOverview() {
         {/* Scenario pipeline */}
         <div className="card" style={{ marginTop: 24 }}>
           <div className="card-header">
-            <span className="card-title">Scenario Pipeline</span>
+            <span className="card-title">Scenario pipeline</span>
             <button className="btn btn-ghost btn-sm" onClick={() => nav('/scenarios')}>
               Manage →
             </button>

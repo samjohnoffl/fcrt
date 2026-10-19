@@ -48,7 +48,7 @@ export function CohortNew() {
 
   return (
     <>
-      <PageHeader title="New Cohort" subtitle="Define a synthetic banking dataset" />
+      <PageHeader title="New cohort" subtitle="Define a synthetic banking dataset" />
       <div className="page-body">
         <div className="card" style={{ maxWidth: 640 }}>
           <form onSubmit={submit} noValidate>
