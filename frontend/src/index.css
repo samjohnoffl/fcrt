@@ -184,13 +184,13 @@ input, select, textarea { font-family: inherit; }
   letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--sidebar-muted);
-  padding: 16px 10px 6px;
+  padding: 10px 10px 5px;
 }
 .nav-link {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 9px 11px;
+  padding: 7px 11px;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
