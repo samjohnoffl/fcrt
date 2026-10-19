@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PageHeader } from '../components/Layout'
 import { LoadingState } from '../components/StateViews'
 import { JsonViewer } from '../components/JsonViewer'
-import { cohortApi, experimentApi } from '../api/endpoints'
+import { cohortApi, campaignApi, experimentApi } from '../api/endpoints'
 import type { CreateExperimentRequest } from '../api/types'
 
 const MUTATION_TYPES = [
@@ -21,6 +21,7 @@ export function ExperimentNew() {
   const [step, setStep] = useState<'config' | 'preview'>('config')
   const [form, setForm] = useState<CreateExperimentRequest>({
     cohort_id: params.get('cohort') ?? '',
+    campaign_id: params.get('campaign') ?? undefined,
     name: '',
     declared_change: '',
     mutation_type: 'split_transaction',
@@ -30,8 +31,28 @@ export function ExperimentNew() {
 
   const { data: cohorts } = useQuery({ queryKey: ['cohorts'], queryFn: cohortApi.list })
   const lockedCohorts = (cohorts ?? []).filter(c => !!c.locked_at)
+  const { data: campaigns } = useQuery({ queryKey: ['campaigns'], queryFn: campaignApi.list })
+  const openCampaigns = (campaigns ?? []).filter(
+    c => c.status === 'active' && c.experiments_used < c.budget,
+  )
 
   const selectedCohort = lockedCohorts.find(c => c.id === form.cohort_id)
+  const selectedCampaign = openCampaigns.find(c => c.id === form.campaign_id)
+
+  // A campaign fixes its cohort; preselect it when arriving from the campaign page.
+  useEffect(() => {
+    if (selectedCampaign?.cohort_id) {
+      setForm(f => (f.cohort_id ? f : { ...f, cohort_id: selectedCampaign.cohort_id! }))
+    }
+  }, [selectedCampaign?.cohort_id])
+
+  useEffect(() => {
+    if (form.campaign_id && !campaigns) return
+    if (form.campaign_id && campaigns && !openCampaigns.some(c => c.id === form.campaign_id)) {
+      // Campaign filled up or was paused while the form was open.
+      setForm(f => ({ ...f, campaign_id: undefined }))
+    }
+  }, [campaigns, form.campaign_id, openCampaigns])
 
   const mut = useMutation({
     mutationFn: experimentApi.create,
@@ -54,6 +75,9 @@ export function ExperimentNew() {
   function validate() {
     const errs: Record<string, string> = {}
     if (!form.cohort_id) errs.cohort_id = 'Select a locked cohort'
+    if (selectedCampaign?.cohort_id && form.cohort_id !== selectedCampaign.cohort_id) {
+      errs.cohort_id = `Campaign "${selectedCampaign.name}" is bound to a different cohort`
+    }
     if (!form.name.trim()) errs.name = 'Name is required'
     if (!form.declared_change.trim()) errs.declared_change = 'Declare the change'
     return errs
@@ -106,6 +130,30 @@ export function ExperimentNew() {
                     {cohorts && lockedCohorts.length === 0 && (
                       <span className="form-hint" style={{ color: 'var(--warning)' }}>No locked cohorts available.</span>
                     )}
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="exp-campaign">Campaign (optional)</label>
+                    <select id="exp-campaign" className="form-select"
+                      value={form.campaign_id ?? ''} onChange={e => {
+                        const id = e.target.value || undefined
+                        const campaign = openCampaigns.find(c => c.id === id)
+                        setForm(f => ({
+                          ...f,
+                          campaign_id: id,
+                          cohort_id: campaign?.cohort_id ?? f.cohort_id,
+                        }))
+                      }}>
+                      <option value="">No campaign</option>
+                      {openCampaigns.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} — {c.budget - c.experiments_used} of {c.budget} left
+                        </option>
+                      ))}
+                    </select>
+                    <span className="form-hint">
+                      Campaign runs count against a fixed budget and share one control configuration.
+                    </span>
                   </div>
 
                   <div className="form-group">
@@ -192,6 +240,7 @@ export function ExperimentNew() {
                     {[
                       ['Cohort', selectedCohort?.name ?? form.cohort_id],
                       ['Cohort seed', String(selectedCohort?.seed ?? '—')],
+                      ['Campaign', selectedCampaign?.name ?? 'None'],
                       ['Name', form.name],
                       ['Mutation type', form.mutation_type],
                       ['Declared change', form.declared_change],

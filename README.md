@@ -517,10 +517,11 @@ DATABASE_TEST_URL='postgres://fcrt:fcrt@localhost:5433/fincrime_redteam?sslmode=
 cd frontend && npm test
 ```
 
-Current status: **345 tests** (250 Go + 95 frontend). In the default `-short`
+Current status: **408 tests** (300 Go + 108 frontend). In the default `-short`
 mode the DB-backed Go integration tests skip; with a migrated database reachable
-via `DATABASE_TEST_URL` all 250 run. Frontend tests cover the session layer, the
-role model, the dashboard, user management and the shared components.
+via `DATABASE_TEST_URL` all 300 run. Frontend tests cover the session layer, the
+role model, the dashboard, scenario creation, campaigns, the review workflow,
+the three-map coverage view, user management and the shared components.
 
 ---
 
@@ -533,7 +534,7 @@ library only loads on the pages that use it.
 
 | Area | Pages |
 |---|---|
-| Workspace | Dashboard, Cohorts, Scenarios, Experiments, Coverage, Discovery, Benchmark Lab |
+| Workspace | Dashboard, Cohorts, Scenarios, Experiments, Campaigns, Review Queue, Coverage, Discovery, Benchmark Lab |
 | Administration (admin only) | Users, Audit log |
 
 **Roles are visible, not just enforced.** The sign-in screen and the Users page

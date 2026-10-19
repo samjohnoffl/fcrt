@@ -8,7 +8,7 @@ import { authApi } from '../api/endpoints'
 
 type IconName =
   | 'dashboard' | 'discovery' | 'cohorts' | 'scenarios' | 'experiments'
-  | 'coverage' | 'benchmark' | 'reviews' | 'users' | 'audit'
+  | 'coverage' | 'benchmark' | 'reviews' | 'users' | 'audit' | 'campaigns'
 
 const SVG = {
   fill: 'none',
@@ -84,6 +84,14 @@ const ICONS: Record<IconName, JSX.Element> = {
       <path d="M9.5 12.5h6M9.5 16h6" />
     </svg>
   ),
+  campaigns: (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...SVG}>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="12" cy="12" r="1" />
+      <path d="M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3" />
+    </svg>
+  ),
 }
 
 function NavIcon({ name }: { name: IconName }) {
@@ -97,6 +105,7 @@ const WORKSPACE_NAV: { to: string; icon: IconName; label: string }[] = [
   { to: '/cohorts',     icon: 'cohorts',     label: 'Cohorts' },
   { to: '/scenarios',   icon: 'scenarios',   label: 'Scenarios' },
   { to: '/experiments', icon: 'experiments', label: 'Experiments' },
+  { to: '/campaigns',   icon: 'campaigns',   label: 'Campaigns' },
   { to: '/reviews',     icon: 'reviews',     label: 'Review Queue' },
   { to: '/coverage',    icon: 'coverage',    label: 'Coverage' },
   { to: '/discovery',   icon: 'discovery',   label: 'Discovery' },

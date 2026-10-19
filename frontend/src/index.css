@@ -263,6 +263,8 @@ input, select, textarea { font-family: inherit; }
 .metric-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
 .metric-value { font-size: 30px; font-weight: 600; margin-top: 6px; line-height: 1.1; letter-spacing: -0.02em; }
 .metric-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+.meter { height: 6px; background: var(--bg-overlay); border-radius: 999px; overflow: hidden; margin-top: 10px; }
+.meter > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 
 /* ── Tables ─────────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
@@ -326,6 +328,12 @@ tbody td { padding: 12px 16px; color: var(--text-primary); vertical-align: middl
 .badge-locked::before { background: var(--warning); }
 .badge-unlocked  { background: var(--bg-overlay);    color: var(--text-secondary); }
 .badge-unlocked::before { background: var(--text-secondary); }
+.badge-active    { background: var(--success-muted); color: var(--success); }
+.badge-active::before { background: var(--success); }
+.badge-paused    { background: var(--warning-muted); color: var(--warning); }
+.badge-paused::before { background: var(--warning); }
+.badge-escalated { background: var(--info-muted);    color: var(--info); }
+.badge-escalated::before { background: var(--info); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; } 50% { opacity: 0.4; }

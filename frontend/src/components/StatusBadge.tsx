@@ -1,7 +1,7 @@
 type BadgeVariant =
   | 'pending' | 'running' | 'completed' | 'failed'
-  | 'approved' | 'rejected'
-  | 'locked' | 'unlocked'
+  | 'approved' | 'rejected' | 'escalated'
+  | 'locked' | 'unlocked' | 'active' | 'paused'
 
 interface Props {
   status: string
@@ -11,15 +11,17 @@ function toVariant(s: string): BadgeVariant {
   const map: Record<string, BadgeVariant> = {
     pending: 'pending', running: 'running',
     completed: 'completed', failed: 'failed',
-    approved: 'approved', rejected: 'rejected',
+    approved: 'approved', rejected: 'rejected', escalated: 'escalated',
     locked: 'locked', unlocked: 'unlocked',
+    active: 'active', paused: 'paused',
   }
   return map[s.toLowerCase()] ?? 'pending'
 }
 
 const LABELS: Record<BadgeVariant, string> = {
   pending: 'Pending', running: 'Running', completed: 'Completed', failed: 'Failed',
-  approved: 'Approved', rejected: 'Rejected', locked: 'Locked', unlocked: 'Unlocked',
+  approved: 'Approved', rejected: 'Rejected', escalated: 'Escalated',
+  locked: 'Locked', unlocked: 'Unlocked', active: 'Active', paused: 'Paused',
 }
 
 export function StatusBadge({ status }: Props) {

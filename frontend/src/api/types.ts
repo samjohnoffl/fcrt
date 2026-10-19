@@ -107,6 +107,7 @@ export interface ExperimentPair {
   declared_change: string
   mutation_type: string
   mutation_spec?: Record<string, unknown>
+  campaign_id?: string
   created_at: string
   completed_at?: string
   /** Outcome summary — present only once the pair has completed. */
@@ -129,6 +130,7 @@ export interface CreateExperimentRequest {
   declared_change: string
   mutation_type: string
   mutation_spec: Record<string, unknown>
+  campaign_id?: string
 }
 
 /* ── Evidence ── */
@@ -238,6 +240,8 @@ export interface Campaign {
   id: string
   name: string
   description: string
+  goal?: string
+  cohort_id?: string
   budget: number
   experiments_used: number
   status: CampaignStatus
@@ -250,6 +254,26 @@ export interface CreateCampaignRequest {
   name: string
   description: string
   budget: number
+  goal?: string
+  cohort_id?: string
+}
+
+export interface UpdateCampaignRequest {
+  description?: string
+  budget?: number
+  status?: CampaignStatus
+}
+
+/** The honest campaign coverage payload: the maps are global, not sliced. */
+export interface CampaignCoverage {
+  campaign_id: string
+  cohort_id?: string
+  experiments: number
+  budget: number
+  experiments_used: number
+  coverage_scope: 'global'
+  coverage_endpoint: string
+  note: string
 }
 
 /* ── Adaptive discovery & benchmark ── */

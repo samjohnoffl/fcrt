@@ -22,6 +22,8 @@ const ExperimentDetail  = lazy(() => import('./pages/ExperimentDetail').then(m =
 const EvidenceViewer    = lazy(() => import('./pages/EvidenceViewer').then(m => ({ default: m.EvidenceViewer })))
 const CoverageDashboard = lazy(() => import('./pages/CoverageDashboard').then(m => ({ default: m.CoverageDashboard })))
 const ReviewQueue       = lazy(() => import('./pages/ReviewQueue').then(m => ({ default: m.ReviewQueue })))
+const CampaignList      = lazy(() => import('./pages/CampaignList').then(m => ({ default: m.CampaignList })))
+const CampaignDetail    = lazy(() => import('./pages/CampaignDetail').then(m => ({ default: m.CampaignDetail })))
 const BenchmarkLab      = lazy(() => import('./pages/BenchmarkLab').then(m => ({ default: m.BenchmarkLab })))
 const Users             = lazy(() => import('./pages/Users').then(m => ({ default: m.Users })))
 const AuditLog          = lazy(() => import('./pages/AuditLog').then(m => ({ default: m.AuditLog })))
@@ -55,6 +57,8 @@ export default function App() {
                   <Route path="/experiments/new"           element={<ExperimentNew />} />
                   <Route path="/experiments/:id"           element={<ExperimentDetail />} />
                   <Route path="/experiments/:id/evidence"  element={<EvidenceViewer />} />
+                  <Route path="/campaigns"                 element={<CampaignList />} />
+                  <Route path="/campaigns/:id"             element={<CampaignDetail />} />
                   <Route path="/reviews"                   element={<ReviewQueue />} />
                   <Route path="/coverage"                  element={<CoverageDashboard />} />
                   <Route path="/benchmark"                 element={<BenchmarkLab />} />

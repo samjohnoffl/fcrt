@@ -3,7 +3,8 @@ import type {
   Cohort, CreateCohortRequest, CoverageSummary,
   EvidenceBundle, ExperimentDetailResponse, ExperimentPair,
   CreateExperimentRequest, ScenarioProposal,
-  Campaign, CreateCampaignRequest, ComparisonResult, DiscoveryRun, BenchmarkStrategy,
+  Campaign, CreateCampaignRequest, UpdateCampaignRequest, CampaignCoverage,
+  ComparisonResult, DiscoveryRun, BenchmarkStrategy,
   RegressionVerifyResponse, LoginResponse, Principal,
   AppUser, CreateUserRequest, UpdateUserRequest, AuditEvent,
   ReviewDecision, ReviewDecisionValue, ReviewQueueItem,
@@ -87,10 +88,15 @@ export const discoveryApi = {
     api.get<ComparisonResult>(`/cohorts/${cohortId}/benchmark`),
 }
 
-/* ── Campaigns (grouping is not persisted yet) ── */
+/* ── Campaigns ── */
 export const campaignApi = {
-  list:   ()                          => api.get<Campaign[]>('/campaigns'),
-  create: (r: CreateCampaignRequest)  => api.post<Campaign>('/campaigns', r),
+  list:      ()                                  => api.get<Campaign[]>('/campaigns'),
+  get:       (id: string)                        => api.get<Campaign>(`/campaigns/${id}`),
+  create:    (r: CreateCampaignRequest)          => api.post<Campaign>('/campaigns', r),
+  update:    (id: string, r: UpdateCampaignRequest) =>
+    api.patch<Campaign>(`/campaigns/${id}`, r),
+  coverage:  (id: string)                        => api.get<CampaignCoverage>(`/campaigns/${id}/coverage`),
+  benchmark: (id: string)                        => api.get<ComparisonResult>(`/campaigns/${id}/benchmark`),
 }
 
 /* ── Reviews ── */
