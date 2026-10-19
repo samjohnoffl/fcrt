@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { getUser, hasRole, clearSession } from '../lib/session'
 import { roleLabel } from '../lib/roles'
 import { authApi } from '../api/endpoints'
+import { Logo } from './Logo'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 // Inline, stroke-based, currentColor — no icon dependency, no emoji.
@@ -133,7 +134,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <div className="layout">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <div className="brand-mark">A</div>
+          <Logo size={34} />
           <div>
             <div className="brand-title">AML Red Team</div>
             <div className="brand-subtitle">Financial Crime AI</div>

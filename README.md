@@ -1,37 +1,87 @@
 # Financial Crime AI Red Team (FCRT)
 
-> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 404 automated tests passing (300 Go + 104 Vitest).
+> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 408 automated tests passing (300 Go + 108 Vitest).
 
-A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection models** using synthetic data, Gemini 1.5 Pro scenario generation, and counterfactual experiments. No real customer PII is ever used.
+A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection models** using synthetic data, Gemini-assisted scenario generation, and counterfactual experiments. No real customer PII is ever used.
 
 ---
 
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│  Browser — React/TypeScript SPA (Firebase Hosting)            │
-│  ├─ CohortList / CohortDetail                                  │
-│  ├─ ScenarioList / ScenarioDetail                             │
-│  ├─ ExperimentList / ExperimentDetail / EvidenceViewer        │
-│  └─ CoverageDashboard                                          │
-└────────────────────────┬──────────────────────────────────────┘
-                         │ HTTPS + Bearer session token
-                         ▼
-┌───────────────────────────────────────────────────────────────┐
-│  Go REST API (Cloud Run) — cmd/api                            │
-│  ├─ internal/api        chi router, auth middleware           │
-│  ├─ internal/bank       synthetic bank generator + repo       │
-│  ├─ internal/scenario   Gemini provider, schema validator     │
-│  ├─ internal/experiment counterfactual experiment runner      │
-│  ├─ internal/coverage   rule coverage tracker                 │
-│  └─ internal/evidence   evidence bundle builder               │
-└────────────────────────┬──────────────────────────────────────┘
-                         │
-             ┌───────────┴────────────┐
-             ▼                        ▼
-  PostgreSQL 16 (Cloud SQL)    Vertex AI (Gemini 1.5 Pro)
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Browser — React 18 + TypeScript SPA                                         │
+│  Dashboard · Cohorts · Scenarios · Experiments · Campaigns · Review Queue    │
+│  Coverage · Discovery · Benchmark Lab                              Firebase  │
+│  Username/password session · role-aware UI (analyst < admin)       Hosting   │
+└──────────────────────────────────┬───────────────────────────────────────────┘
+                                   │ HTTPS JSON + Bearer session token
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Go API + worker — one container (Render)                                    │
+│                                                                              │
+│  chi router ── auth middleware ── handlers ── audit events                   │
+│      │                                                                       │
+│      ├─ synthetic bank generator   deterministic, seeded, lockable cohorts   │
+│      ├─ experiment runner ────────► AML control harness (8 families)         │
+│      ├─ counterfactual validator    declared / dependent / unintended change │
+│      ├─ coverage tracker             control × outcome × scenario maps       │
+│      ├─ adaptive discovery          weights 30/25/25/20 → benchmark          │
+│      ├─ evidence bundles            reproducible, checksummed artifacts      │
+│      └─ DB-backed job queue         SKIP LOCKED, crash-safe worker loop      │
+└──────────────┬────────────────────────────────────────────┬──────────────────┘
+               │ pgx / SQL                                  │ HTTPS (server-side only)
+               ▼                                            ▼
+┌──────────────────────────────────┐        ┌──────────────────────────────────┐
+│  PostgreSQL 16 (Neon)            │        │  Gemini API  (GEMINI_API_KEY)    │
+│  cohort · experiment_pair · run  │        │  or Vertex AI (VERTEX_PROJECT)   │
+│  rule_outcome · rule_coverage    │        │                                  │
+│  scenario_proposal · campaign    │        │  Scenario proposals only         │
+│  review_decision · audit_event   │        │  (validated, human-approved)     │
+└──────────────────────────────────┘        └──────────────────────────────────┘
 ```
+
+### Request flow (experiment)
+
+1. An analyst picks a **locked cohort** and either a manual mutation or an
+   approved Gemini proposal; a **campaign** may cap the number of runs.
+2. The API regenerates the seeded synthetic bank and executes the **baseline**
+   and the **mutated variant** against the same control configuration.
+3. Each of the eight control families returns one **outcome** (`triggered`,
+   `not_triggered`, `not_applicable`, `inconclusive`, `failed`) with a reason
+   code, so a broken control is never silently recorded as a non-detection.
+4. The counterfactual diff, coverage maps and an evidence bundle are persisted;
+   the campaign budget is incremented in the same request path.
+5. A reviewer records **approve / reject / escalate** with a rationale; the
+   decision and an audit event are stored.
+
+### Where Gemini is used — and where it is not
+
+**Main use: AI scenario generation.** `POST /api/v1/scenarios` (`internal/scenario`,
+`internal/api/handler_scenario.go`) asks Gemini for candidate AML-evasion
+mutations. Only statistical cohort summaries are sent — never row-level data.
+The model proposes a mutation type (`split_transaction`,
+`introduce_shell_entity`, `delay_and_resubmit`), parameters and a rationale.
+
+The response is treated as untrusted: it is schema- and whitelist-validated,
+out-of-range values are clamped or rejected, and only accepted candidates reach
+the database. The raw prompt, raw response, model ID and correlation ID are
+stored verbatim on `scenario_proposal` for audit. **No generated scenario runs
+until a human approves it.**
+
+Gemini is **not** in the detection loop:
+
+- The baseline/variant runs are generated and scored by deterministic Go code,
+  so the same cohort seed and control version always reproduce the same result.
+- Adaptive discovery and the benchmark operate on **already stored proposals
+  and runs**. The `gemini_only` strategy replays Gemini's generation order; it
+  does not call the model again. Comparisons never invent metrics.
+- Coverage maps, counterfactual classification and review decisions are pure
+  rule/data logic.
+
+Provider selection is backend-only: `GEMINI_API_KEY` uses the Gemini API;
+`VERTEX_PROJECT` + ADC uses Vertex AI. The default model is
+`gemini-3.8-flash`, overridable with `GEMINI_MODEL`.
 
 ### Key Design Decisions
 
@@ -94,10 +144,10 @@ review_decision (pair_id UNIQUE, reviewer, decision, rationale)
 |---|---|
 | API | Go 1.24, chi v5 router |
 | Frontend | React 18 + TypeScript 5, Vite 5 |
-| Database | PostgreSQL 16 (Cloud SQL) |
-| AI | Gemini 1.5 Pro via Vertex AI REST |
+| Database | PostgreSQL 16 (Neon free tier) |
+| AI | Gemini API primary, Vertex AI fallback (`gemini-3.8-flash` by default) |
 | Auth | Username/password session tokens (default), Firebase ID tokens (optional) |
-| Hosting | Firebase Hosting (SPA) + Cloud Run (API) |
+| Hosting | Firebase Hosting (SPA) + Render (API + worker, single container) |
 | Migrations | golang-migrate |
 
 ---

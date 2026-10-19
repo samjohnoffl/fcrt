@@ -11,6 +11,7 @@ import { authApi } from '../api/endpoints'
 import { FetchError } from '../api/client'
 import { setSession } from '../lib/session'
 import { ROLES, ROLE_ORDER } from '../lib/roles'
+import { Logo } from '../components/Logo'
 import type { Role } from '../api/types'
 
 const TEST_ACCOUNTS: { username: string; password: string; role: Role }[] = [
@@ -54,12 +55,16 @@ export function Login() {
       <div className="login-panel">
         <form className="card login-card" onSubmit={submit} aria-label="Sign in">
           <div className="login-brand">
-            <div className="brand-mark" aria-hidden="true">A</div>
+            <Logo size={46} />
             <div>
-              <div className="brand-title">AML Red Team</div>
+              <div className="brand-title login-brand-title">AML Red Team</div>
               <div className="brand-subtitle">Financial Crime AI</div>
             </div>
           </div>
+          <p className="login-tagline">
+            Adversarial testing for AML controls — synthetic data, reproducible
+            evidence, human-approved scenarios.
+          </p>
 
           <div className="form-stack">
             <div className="form-group">
