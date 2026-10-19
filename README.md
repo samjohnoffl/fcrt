@@ -1,6 +1,6 @@
 # Financial Crime AI Red Team (FCRT)
 
-> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 305 tests passing (227 Go + 78 Vitest).
+> **Status**: Production-ready Go backend + React/TypeScript frontend — build clean, 404 automated tests passing (300 Go + 104 Vitest).
 
 A sandboxed platform for **red-teaming AML (Anti-Money Laundering) detection models** using synthetic data, Gemini 1.5 Pro scenario generation, and counterfactual experiments. No real customer PII is ever used.
 

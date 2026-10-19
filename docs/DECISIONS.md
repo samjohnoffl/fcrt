@@ -272,4 +272,4 @@ Decisions are numbered sequentially. Never delete; supersede with a new entry.
 - Campaigns are persisted and budgeted, but the frontend has no campaign management screen, and coverage is not sliced per campaign at outcome-write time.
 - Counterfactual validation is exposed as a standalone API and is not yet attached to stored experiment pairs, because the experiment request does not carry a baseline genome.
 
-**Evidence**: `go test ./...` (295 test runs, including new outcome, counterfactual, coverage, campaign, payment and review tests) and the frontend suite (102 tests, including the three-map coverage view and the review workflow) pass. Migrations apply cleanly to version 13.
+**Evidence**: `go test ./...` (300 test runs, including new outcome, counterfactual, coverage, campaign, payment, review and scenario-creation API tests) and the frontend suite (104 tests, including the three-map coverage view, the review workflow and scenario creation) pass. Migrations apply cleanly to version 13.
